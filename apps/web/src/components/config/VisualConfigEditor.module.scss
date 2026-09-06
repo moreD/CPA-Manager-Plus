@@ -898,6 +898,12 @@
   }
 }
 
+.apiKeyLimitSummary {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  margin-top: 4px;
+}
+
 @media (max-width: 900px) {
   .payloadRuleModelRow,
   .payloadRuleModelRowProtocolFirst,

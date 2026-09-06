@@ -53,6 +53,11 @@ import styles from './ConfigPage.module.scss';
 type ConfigEditorTab = 'visual' | 'source' | 'manager';
 export type ManagerBindingStatus = 'unknown' | 'unconfigured' | 'matched';
 
+type RuntimeApiKeyEntry = { apiKey: string };
+
+const runtimeApiKeyValues = (entries: Array<RuntimeApiKeyEntry | string>): string[] =>
+  entries.map((entry) => (typeof entry === 'string' ? entry : entry.apiKey));
+
 const MANAGER_COLLECTOR_DEFAULT = {
   enabled: true,
   collectorMode: 'auto',
@@ -641,7 +646,8 @@ export function ConfigPage() {
 
       if (mutation.type === 'create') {
         const normalizedApiKey = mutation.apiKey.trim();
-        const currentKeys = await apiKeysApi.list();
+        const currentEntries = (await apiKeysApi.list()) as Array<RuntimeApiKeyEntry | string>;
+        const currentKeys = runtimeApiKeyValues(currentEntries);
         if (currentKeys.some((key) => key.trim() === normalizedApiKey)) {
           commitApiKeysText(currentKeys.join('\n'));
           await refreshCleanSourceSnapshot();
@@ -653,7 +659,12 @@ export function ConfigPage() {
         }
         updateSourceSnapshotStale(true);
         try {
-          await apiKeysApi.replace([...currentKeys, normalizedApiKey]);
+          await apiKeysApi.replace([
+            ...currentEntries,
+            currentEntries.every((entry) => typeof entry === 'string')
+              ? normalizedApiKey
+              : { apiKey: normalizedApiKey },
+          ]);
         } catch (cause) {
           const error = new Error(
             t('config_management.visual.api_keys.mutation_outcome_unknown')
@@ -665,7 +676,8 @@ export function ConfigPage() {
       } else if (mutation.type === 'replace') {
         const normalizedOldApiKey = mutation.oldApiKey.trim();
         const normalizedNewApiKey = mutation.newApiKey.trim();
-        const currentKeys = await apiKeysApi.list();
+        const currentEntries = (await apiKeysApi.list()) as Array<RuntimeApiKeyEntry | string>;
+        const currentKeys = runtimeApiKeyValues(currentEntries);
         const preflightError = resolveApiKeyReplacePreflight({
           currentKeys,
           oldApiKey: normalizedOldApiKey,
@@ -711,7 +723,9 @@ export function ConfigPage() {
 
       let canonicalKeys: string[];
       try {
-        canonicalKeys = await apiKeysApi.list();
+        canonicalKeys = runtimeApiKeyValues(
+          (await apiKeysApi.list()) as Array<RuntimeApiKeyEntry | string>
+        );
       } catch (error) {
         const refreshError = new Error(
           t('config_management.visual.api_keys.state_refresh_failed')
@@ -742,7 +756,9 @@ export function ConfigPage() {
       error.code = 'source_config_dirty';
       throw error;
     }
-    const canonicalKeys = await apiKeysApi.list();
+    const canonicalKeys = runtimeApiKeyValues(
+      (await apiKeysApi.list()) as Array<RuntimeApiKeyEntry | string>
+    );
     commitApiKeysText(canonicalKeys.join('\n'));
     await refreshCleanSourceSnapshot();
     return canonicalKeys;

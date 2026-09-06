@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { normalizeConfigResponse } from './transformers';
 
 describe('normalizeConfigResponse xAI API keys', () => {
+  it('preserves decimal client cost limits', () => {
+    const config = normalizeConfigResponse({
+      'api-keys': [
+        { 'api-key': 'client-key', 'cost-limits': { '12h': 4.5, '7d': 120.123456789 } },
+      ],
+    });
+
+    expect(config.apiKeys).toEqual([
+      { apiKey: 'client-key', costLimits: { '12h': 4.5, '7d': 120.123456789 } },
+    ]);
+  });
+
   it('normalizes the xai-api-key contract using the provider-key shape', () => {
     const config = normalizeConfigResponse({
       'xai-api-key': [

@@ -9,6 +9,7 @@ import { copyToClipboard } from '@/utils/clipboard';
 import { maskApiKey } from '@/utils/format';
 import { sha256Hex } from '@/utils/apiKeyHash';
 import { isValidApiKeyCharset } from '@/utils/validation';
+import { makeClientId, type ClientApiKeyEntry } from '@/types/visualConfig';
 import styles from './VisualConfigEditor.module.scss';
 
 export type ApiKeyMutation =
@@ -38,28 +39,43 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   onRefreshApiKeys,
   onApiKeyOperationStart,
   onApiKeyOperationEnd,
+  onChange,
 }: {
-  value: string;
+  value: string | ClientApiKeyEntry[];
   disabled?: boolean;
   onPersistApiKeyMutation: (mutation: ApiKeyMutation) => Promise<string[]>;
   onRefreshApiKeys: () => Promise<string[]>;
   onApiKeyOperationStart: () => void;
   onApiKeyOperationEnd: () => void;
+  onChange?: (nextValue: ClientApiKeyEntry[]) => void;
 }) {
   const { t } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const managementKey = useAuthStore((state) => state.managementKey);
   const featureAvailability = usePanelFeatureAvailability();
-  const apiKeys = useMemo(
+  const apiKeyEntries = useMemo(
     () =>
-      value
-        .split('\n')
-        .map((key) => key.trim())
-        .filter(Boolean),
+      typeof value === 'string'
+        ? value
+            .split('\n')
+            .map((apiKey) => apiKey.trim())
+            .filter(Boolean)
+            .map((apiKey) => ({
+              id: apiKey,
+              name: '',
+              apiKey,
+              costLimits12h: '',
+              costLimits7d: '',
+            }))
+        : value.filter((entry) => entry.apiKey.trim()),
     [value]
   );
+  const apiKeys = useMemo(() => apiKeyEntries.map((entry) => entry.apiKey), [apiKeyEntries]);
   const apiKeyInputId = useId();
+  const apiKeyNameInputId = useId();
+  const apiKeyLimit12hInputId = useId();
+  const apiKeyLimit7dInputId = useId();
   const apiKeyHintId = `${apiKeyInputId}-hint`;
   const apiKeyErrorId = `${apiKeyInputId}-error`;
   const keyAliasInputId = `${apiKeyInputId}-alias`;
@@ -68,6 +84,9 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   const [modalOpen, setModalOpen] = useState(false);
   const [editingApiKey, setEditingApiKey] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState('');
+  const [nameValue, setNameValue] = useState('');
+  const [limit12hValue, setLimit12hValue] = useState('');
+  const [limit7dValue, setLimit7dValue] = useState('');
   const [inputAliasValue, setInputAliasValue] = useState('');
   const [formError, setFormError] = useState('');
   const [apiKeyAliases, setApiKeyAliases] = useState<ApiKeyAlias[]>([]);
@@ -96,6 +115,7 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   const aliasCapabilityChecking = featureAvailability.checking;
   const panelHostUnconfirmed = !featureAvailability.panelHostConfirmed;
   const managerHostedPanel = featureAvailability.panelHostMode === 'manager_embedded';
+  const aliasControlsVisible = managerHostedPanel;
   const resolveAliasServiceBase = useCallback(
     async (): Promise<string> =>
       !aliasCapabilityChecking &&
@@ -348,14 +368,21 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   const openAddModal = () => {
     setEditingApiKey(null);
     setInputValue('');
+    setNameValue('');
+    setLimit12hValue('');
+    setLimit7dValue('');
     setInputAliasValue('');
     setFormError('');
     setModalOpen(true);
   };
 
   const openEditModal = (apiKey: string) => {
+    const entry = apiKeyEntries.find((candidate) => candidate.apiKey === apiKey);
     setEditingApiKey(apiKey);
     setInputValue(apiKey);
+    setNameValue(entry?.name ?? '');
+    setLimit12hValue(entry?.costLimits12h ?? '');
+    setLimit7dValue(entry?.costLimits7d ?? '');
     setInputAliasValue(getAliasForApiKey(apiKey));
     setFormError('');
     setModalOpen(true);
@@ -364,6 +391,9 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   const closeModal = () => {
     setModalOpen(false);
     setInputValue('');
+    setNameValue('');
+    setLimit12hValue('');
+    setLimit7dValue('');
     setInputAliasValue('');
     setEditingApiKey(null);
     setFormError('');
@@ -433,6 +463,34 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   const hasCanonicalApiKey = (keys: string[], apiKey: string) =>
     keys.some((key) => key.trim() === apiKey.trim());
 
+  const normalizedLimit = (value: string) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0 ? String(Number(numeric.toFixed(9))) : '';
+  };
+
+  const commitCanonicalEntries = (
+    canonicalKeys: string[],
+    nextEntry?: ClientApiKeyEntry,
+    oldApiKey?: string
+  ) => {
+    if (!onChange) return;
+    onChange(
+      canonicalKeys.map((apiKey) => {
+        if (nextEntry && apiKey === nextEntry.apiKey) return nextEntry;
+        const existing = apiKeyEntries.find((entry) => entry.apiKey === apiKey);
+        if (existing) return existing;
+        if (nextEntry && oldApiKey && apiKey === oldApiKey) return nextEntry;
+        return {
+          id: makeClientId(),
+          name: '',
+          apiKey,
+          costLimits12h: '',
+          costLimits7d: '',
+        };
+      })
+    );
+  };
+
   const handleDelete = (apiKey: string) => {
     if (disabled || mutationInFlightRef.current) return;
     if (
@@ -453,7 +511,8 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
       onConfirm: async () => {
         if (!beginMutation()) return;
         try {
-          await onPersistApiKeyMutation({ type: 'delete', apiKey });
+          const canonicalKeys = await onPersistApiKeyMutation({ type: 'delete', apiKey });
+          commitCanonicalEntries(canonicalKeys);
           const apiKeyHash = getApiKeyHash(apiKey);
           if (apiKeyHash && aliasServiceAvailable) {
             try {
@@ -489,6 +548,16 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
       return;
     }
     const oldApiKey = editingApiKey;
+    const oldEntry = oldApiKey
+      ? apiKeyEntries.find((entry) => entry.apiKey === oldApiKey)
+      : undefined;
+    const nextEntry: ClientApiKeyEntry = {
+      id: oldEntry?.id ?? makeClientId(),
+      name: nameValue.trim(),
+      apiKey: trimmed,
+      costLimits12h: normalizedLimit(limit12hValue),
+      costLimits7d: normalizedLimit(limit7dValue),
+    };
     const isCreate = oldApiKey === null;
     const isReplace = oldApiKey !== null && oldApiKey !== trimmed;
     if (isCreate && apiKeys.some((key) => key === trimmed)) {
@@ -526,15 +595,16 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
           closeModal();
           return;
         }
+        commitCanonicalEntries(canonicalKeys, nextEntry, oldApiKey ?? undefined);
 
         const activeApiKeyHashes = collectActiveApiKeyHashes(canonicalKeys);
+        if (normalizeAliasKey(trimmedAlias) === normalizeAliasKey(oldAlias)) {
+          closeModal();
+          return;
+        }
         const aliasError = validateAlias(trimmedAlias, getApiKeyHash(trimmed), activeApiKeyHashes);
         if (aliasError) {
           setFormError(aliasError);
-          return;
-        }
-        if (normalizeAliasKey(trimmedAlias) === normalizeAliasKey(oldAlias)) {
-          closeModal();
           return;
         }
 
@@ -601,6 +671,7 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
         setFormError(t('config_management.visual.api_keys.canonical_key_missing'));
         return;
       }
+      commitCanonicalEntries(canonicalKeys, nextEntry, oldApiKey ?? undefined);
 
       const activeApiKeyHashes = collectActiveApiKeyHashes(canonicalKeys);
       const newApiKeyHash = getApiKeyHash(trimmed);
@@ -785,25 +856,51 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
       ) : (
         <div className="item-list" style={{ marginTop: 4 }}>
           {apiKeys.map((key, index) => {
+            const entry = apiKeyEntries[index];
             const apiKeyHash = getApiKeyHash(key);
             const alias = apiKeyHash ? (aliasByHash.get(apiKeyHash)?.alias ?? '') : '';
+            const limits = [
+              entry?.costLimits12h
+                ? t('config_management.visual.api_keys.limit_summary_12h', {
+                    value: new Intl.NumberFormat(undefined, {
+                      style: 'currency',
+                      currency: 'USD',
+                      maximumFractionDigits: 2,
+                    }).format(Number(entry.costLimits12h)),
+                  })
+                : '',
+              entry?.costLimits7d
+                ? t('config_management.visual.api_keys.limit_summary_7d', {
+                    value: new Intl.NumberFormat(undefined, {
+                      style: 'currency',
+                      currency: 'USD',
+                      maximumFractionDigits: 2,
+                    }).format(Number(entry.costLimits7d)),
+                  })
+                : '',
+            ].filter(Boolean);
             return (
-              <div key={`${key}-${index}`} className="item-row">
+              <div key={entry?.id || `${key}-${index}`} className="item-row">
                 <div className="item-meta">
                   <div className="item-title">
-                    {alias || t('config_management.visual.api_keys.input_label')}
+                    {entry?.name || alias || t('config_management.visual.api_keys.input_label')}
                   </div>
                   <div className="item-subtitle">{maskApiKey(String(key || ''))}</div>
+                  {limits.length > 0 ? (
+                    <div className={styles.apiKeyLimitSummary}>{limits.join(' · ')}</div>
+                  ) : null}
                 </div>
                 <div className="item-actions">
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    onClick={() => openAliasModal(key)}
-                    disabled={disabled || mutationSaving || aliasesLoading || !aliasesAvailable}
-                  >
-                    {t('config_management.visual.api_keys.alias_action')}
-                  </Button>
+                  {aliasControlsVisible ? (
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      onClick={() => openAliasModal(key)}
+                      disabled={disabled || mutationSaving || aliasesLoading || !aliasesAvailable}
+                    >
+                      {t('config_management.visual.api_keys.alias_action')}
+                    </Button>
+                  ) : null}
                   <Button
                     variant="secondary"
                     size="xs"
@@ -836,7 +933,7 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
       )}
 
       <div className="hint">{t('config_management.visual.api_keys.hint')}</div>
-      {!aliasesAvailable && !aliasesLoading ? (
+      {aliasControlsVisible && !aliasesAvailable && !aliasesLoading ? (
         <div className="hint">{t('config_management.visual.api_keys.alias_unavailable')}</div>
       ) : null}
 
@@ -897,20 +994,67 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
             {t('config_management.visual.api_keys.input_hint')}
           </div>
           <div className="form-group">
-            <label htmlFor={keyAliasInputId}>
-              {t('config_management.visual.api_keys.alias_label')}
+            <label htmlFor={apiKeyNameInputId}>
+              {t('config_management.visual.api_keys.name_label')}
             </label>
             <input
-              id={keyAliasInputId}
+              id={apiKeyNameInputId}
               className="input"
-              placeholder={t('config_management.visual.api_keys.alias_placeholder')}
-              value={inputAliasValue}
-              onChange={(e) => setInputAliasValue(e.target.value)}
-              disabled={disabled || mutationSaving || aliasesLoading || !aliasesAvailable}
-              maxLength={120}
+              placeholder={t('config_management.visual.api_keys.name_placeholder')}
+              value={nameValue}
+              onChange={(event) => setNameValue(event.target.value)}
+              disabled={disabled || mutationSaving}
             />
-            <div className="hint">{t('config_management.visual.api_keys.alias_hint')}</div>
           </div>
+          <div className="form-group">
+            <label htmlFor={apiKeyLimit12hInputId}>
+              {t('config_management.visual.api_keys.limit_12h_label')}
+            </label>
+            <input
+              id={apiKeyLimit12hInputId}
+              className="input"
+              type="number"
+              min="0"
+              step="0.000000001"
+              placeholder={t('config_management.visual.api_keys.limit_placeholder')}
+              value={limit12hValue}
+              onChange={(event) => setLimit12hValue(event.target.value)}
+              disabled={disabled || mutationSaving}
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor={apiKeyLimit7dInputId}>
+              {t('config_management.visual.api_keys.limit_7d_label')}
+            </label>
+            <input
+              id={apiKeyLimit7dInputId}
+              className="input"
+              type="number"
+              min="0"
+              step="0.000000001"
+              placeholder={t('config_management.visual.api_keys.limit_placeholder')}
+              value={limit7dValue}
+              onChange={(event) => setLimit7dValue(event.target.value)}
+              disabled={disabled || mutationSaving}
+            />
+          </div>
+          {aliasControlsVisible ? (
+            <div className="form-group">
+              <label htmlFor={keyAliasInputId}>
+                {t('config_management.visual.api_keys.alias_label')}
+              </label>
+              <input
+                id={keyAliasInputId}
+                className="input"
+                placeholder={t('config_management.visual.api_keys.alias_placeholder')}
+                value={inputAliasValue}
+                onChange={(e) => setInputAliasValue(e.target.value)}
+                disabled={disabled || mutationSaving || aliasesLoading || !aliasesAvailable}
+                maxLength={120}
+              />
+              <div className="hint">{t('config_management.visual.api_keys.alias_hint')}</div>
+            </div>
+          ) : null}
           {formError && (
             <div id={apiKeyErrorId} className="error-box">
               {formError}

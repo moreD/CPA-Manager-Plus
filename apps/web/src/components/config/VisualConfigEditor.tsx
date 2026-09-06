@@ -30,6 +30,7 @@ import {
 import { ConfigSection } from '@/components/config/ConfigSection';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import type {
+  ClientApiKeyEntry,
   PayloadFilterRule,
   PayloadParamValidationErrorCode,
   PayloadRule,
@@ -251,6 +252,10 @@ export function VisualConfigEditor({
     validationErrors?.['streaming.nonstreamKeepaliveInterval']
   );
 
+  const handleApiKeyEntriesChange = useCallback(
+    (apiKeyEntries: ClientApiKeyEntry[]) => onChange({ apiKeyEntries }),
+    [onChange]
+  );
   const handlePayloadDefaultRulesChange = useCallback(
     (payloadDefaultRules: PayloadRule[]) => onChange({ payloadDefaultRules }),
     [onChange]
@@ -728,9 +733,7 @@ export function VisualConfigEditor({
                       variant="secondary"
                       size="xs"
                       disabled={disabled || values.rmSecretKeyAction === 'unchanged'}
-                      onClick={() =>
-                        onChange({ rmSecretKey: '', rmSecretKeyAction: 'unchanged' })
-                      }
+                      onClick={() => onChange({ rmSecretKey: '', rmSecretKeyAction: 'unchanged' })}
                     >
                       {t('config_management.visual.sections.remote.secret_key_keep')}
                     </Button>
@@ -775,8 +778,9 @@ export function VisualConfigEditor({
               />
               <div className={styles.subsection}>
                 <ApiKeysCardEditor
-                  value={values.apiKeysText}
+                  value={values.apiKeyEntries}
                   disabled={disabled}
+                  onChange={handleApiKeyEntriesChange}
                   onPersistApiKeyMutation={onPersistApiKeyMutation}
                   onRefreshApiKeys={onRefreshApiKeys}
                   onApiKeyOperationStart={onApiKeyOperationStart}
@@ -1118,9 +1122,7 @@ export function VisualConfigEditor({
                   value={values.gptImage2BaseModel}
                   onChange={(e) => onChange({ gptImage2BaseModel: e.target.value })}
                   disabled={disabled}
-                  hint={t(
-                    'config_management.visual.sections.network.gpt_image_2_base_model_hint'
-                  )}
+                  hint={t('config_management.visual.sections.network.gpt_image_2_base_model_hint')}
                 />
                 <Input
                   label={t('config_management.visual.sections.network.video_result_auth_cache_ttl')}

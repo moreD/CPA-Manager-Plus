@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useReducer } from 'react';
 import { isMap, parse as parseYaml, parseDocument } from 'yaml';
 import type {
+  ClientApiKeyEntry,
   DisableImageGenerationMode,
   PluginStoreAuthApplyTo,
   PluginStoreAuthRule,
@@ -8,7 +9,7 @@ import type {
   VisualConfigValues,
   VisualConfigValidationErrors,
 } from '@/types/visualConfig';
-import { DEFAULT_VISUAL_VALUES } from '@/types/visualConfig';
+import { DEFAULT_VISUAL_VALUES, makeClientId } from '@/types/visualConfig';
 import { normalizeRoutingStrategy } from '@/utils/routingStrategy';
 import {
   arePayloadFilterRulesEqual,
@@ -33,10 +34,19 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function extractApiKeyValue(raw: unknown): string | null {
+function formatOptionalLimit(value: unknown): string {
+  if (value === undefined || value === null || value === '') return '';
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '';
+  return String(Number(numeric.toFixed(9)));
+}
+
+function extractApiKeyEntry(raw: unknown): ClientApiKeyEntry | null {
   if (typeof raw === 'string') {
     const trimmed = raw.trim();
-    return trimmed ? trimmed : null;
+    return trimmed
+      ? { id: makeClientId(), name: '', apiKey: trimmed, costLimits12h: '', costLimits7d: '' }
+      : null;
   }
 
   const record = asRecord(raw);
@@ -46,22 +56,34 @@ function extractApiKeyValue(raw: unknown): string | null {
   for (const candidate of candidates) {
     if (typeof candidate === 'string') {
       const trimmed = candidate.trim();
-      if (trimmed) return trimmed;
+      if (trimmed) {
+        const limits = asRecord(record['cost-limits'] ?? record.costLimits);
+        return {
+          id: makeClientId(),
+          name: String(record.name ?? record.Name ?? '').trim(),
+          apiKey: trimmed,
+          costLimits12h: formatOptionalLimit(limits?.['12h']),
+          costLimits7d: formatOptionalLimit(limits?.['7d']),
+        };
+      }
     }
   }
 
   return null;
 }
 
-function parseApiKeysText(raw: unknown): string {
-  if (!Array.isArray(raw)) return '';
+function parseApiKeyEntries(raw: unknown): ClientApiKeyEntry[] {
+  if (!Array.isArray(raw)) return [];
 
-  const keys: string[] = [];
+  const entries: ClientApiKeyEntry[] = [];
+  const seen = new Set<string>();
   for (const item of raw) {
-    const key = extractApiKeyValue(item);
-    if (key) keys.push(key);
+    const entry = extractApiKeyEntry(item);
+    if (!entry || seen.has(entry.apiKey)) continue;
+    seen.add(entry.apiKey);
+    entries.push(entry);
   }
-  return keys.join('\n');
+  return entries;
 }
 
 function parseStringArrayText(raw: unknown): string {
@@ -137,21 +159,21 @@ function parsePluginStoreAuthRules(raw: unknown): PluginStoreAuthRule[] {
     .filter((rule): rule is PluginStoreAuthRule => Boolean(rule));
 }
 
-function resolveApiKeysText(parsed: Record<string, unknown>): string {
+function resolveApiKeyEntries(parsed: Record<string, unknown>): ClientApiKeyEntry[] {
   if (Object.prototype.hasOwnProperty.call(parsed, 'api-keys')) {
-    return parseApiKeysText(parsed['api-keys']);
+    return parseApiKeyEntries(parsed['api-keys']);
   }
 
   const auth = asRecord(parsed.auth);
   const providers = asRecord(auth?.providers);
   const configApiKeyProvider = asRecord(providers?.['config-api-key']);
-  if (!configApiKeyProvider) return '';
+  if (!configApiKeyProvider) return [];
 
   if (Object.prototype.hasOwnProperty.call(configApiKeyProvider, 'api-key-entries')) {
-    return parseApiKeysText(configApiKeyProvider['api-key-entries']);
+    return parseApiKeyEntries(configApiKeyProvider['api-key-entries']);
   }
 
-  return parseApiKeysText(configApiKeyProvider['api-keys']);
+  return parseApiKeyEntries(configApiKeyProvider['api-keys']);
 }
 
 type YamlDocument = ReturnType<typeof parseDocument>;
@@ -518,8 +540,11 @@ function getNextDirtyFields(
   if (Object.prototype.hasOwnProperty.call(patch, 'authDir')) {
     updateDirty('authDir', nextValues.authDir === baselineValues.authDir);
   }
-  if (Object.prototype.hasOwnProperty.call(patch, 'apiKeysText')) {
-    updateDirty('apiKeysText', nextValues.apiKeysText === baselineValues.apiKeysText);
+  if (Object.prototype.hasOwnProperty.call(patch, 'apiKeyEntries')) {
+    updateDirty(
+      'apiKeyEntries',
+      JSON.stringify(nextValues.apiKeyEntries) === JSON.stringify(baselineValues.apiKeyEntries)
+    );
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'debug')) {
     updateDirty('debug', nextValues.debug === baselineValues.debug);
@@ -705,16 +730,34 @@ function visualConfigReducer(
     case 'commit_api_keys': {
       const dirtyFields = new Set(state.dirtyFields);
       dirtyFields.delete('apiKeysText');
+      dirtyFields.delete('apiKeyEntries');
+      const apiKeys = action.apiKeysText
+        .split('\n')
+        .map((apiKey) => apiKey.trim())
+        .filter(Boolean);
+      const apiKeyEntries = apiKeys.map(
+        (apiKey) =>
+          state.visualValues.apiKeyEntries.find((entry) => entry.apiKey === apiKey) ??
+          state.baselineValues.apiKeyEntries.find((entry) => entry.apiKey === apiKey) ?? {
+            id: makeClientId(),
+            name: '',
+            apiKey,
+            costLimits12h: '',
+            costLimits7d: '',
+          }
+      );
 
       return {
         ...state,
         visualValues: {
           ...state.visualValues,
           apiKeysText: action.apiKeysText,
+          apiKeyEntries,
         },
         baselineValues: {
           ...state.baselineValues,
           apiKeysText: action.apiKeysText,
+          apiKeyEntries: deepClone(apiKeyEntries),
         },
         dirtyFields,
       };
@@ -770,6 +813,7 @@ export function useVisualConfig() {
       const claudeHeaderDefaults = asRecord(parsed['claude-header-defaults']);
       const codexHeaderDefaults = asRecord(parsed['codex-header-defaults']);
       const codex = asRecord(parsed.codex);
+      const apiKeyEntries = resolveApiKeyEntries(parsed);
 
       const newValues: VisualConfigValues = {
         host: typeof parsed.host === 'string' ? parsed.host : '',
@@ -795,7 +839,8 @@ export function useVisualConfig() {
               : '',
 
         authDir: typeof parsed['auth-dir'] === 'string' ? parsed['auth-dir'] : '',
-        apiKeysText: resolveApiKeysText(parsed),
+        apiKeysText: apiKeyEntries.map((entry) => entry.apiKey).join('\n'),
+        apiKeyEntries,
         pluginsEnabled: Boolean(plugins?.enabled),
         pluginsDir: typeof plugins?.dir === 'string' ? plugins.dir : '',
         pluginStoreSourcesText: parseStringArrayText(
@@ -989,11 +1034,25 @@ export function useVisualConfig() {
         }
 
         if (isDirty('authDir')) setStringInDoc(doc, ['auth-dir'], values.authDir);
-        if (isDirty('apiKeysText')) {
-          const apiKeys = values.apiKeysText
-            .split('\n')
-            .map((key) => key.trim())
-            .filter(Boolean);
+        if (isDirty('apiKeyEntries')) {
+          const apiKeys = values.apiKeyEntries
+            .map((entry) => {
+              const name = entry.name.trim();
+              const apiKey = entry.apiKey.trim();
+              const costLimits: Record<string, number> = {};
+              const limit12h = Number(entry.costLimits12h);
+              const limit7d = Number(entry.costLimits7d);
+              if (Number.isFinite(limit12h) && limit12h > 0)
+                costLimits['12h'] = Number(limit12h.toFixed(9));
+              if (Number.isFinite(limit7d) && limit7d > 0)
+                costLimits['7d'] = Number(limit7d.toFixed(9));
+              return {
+                ...(name ? { name } : {}),
+                'api-key': apiKey,
+                ...(Object.keys(costLimits).length > 0 ? { 'cost-limits': costLimits } : {}),
+              };
+            })
+            .filter((entry) => entry['api-key']);
           if (apiKeys.length > 0) {
             doc.setIn(['api-keys'], apiKeys);
           } else if (docHas(doc, ['api-keys'])) {
@@ -1089,14 +1148,16 @@ export function useVisualConfig() {
         if (isDirty('passthroughHeaders')) {
           setBooleanInDoc(doc, ['passthrough-headers'], values.passthroughHeaders);
         }
-        if (isDirty('requestRetry')) setIntFromStringInDoc(doc, ['request-retry'], values.requestRetry);
+        if (isDirty('requestRetry'))
+          setIntFromStringInDoc(doc, ['request-retry'], values.requestRetry);
         if (isDirty('maxRetryCredentials')) {
           setIntFromStringInDoc(doc, ['max-retry-credentials'], values.maxRetryCredentials);
         }
         if (isDirty('maxRetryInterval')) {
           setIntFromStringInDoc(doc, ['max-retry-interval'], values.maxRetryInterval);
         }
-        if (isDirty('disableCooling')) setBooleanInDoc(doc, ['disable-cooling'], values.disableCooling);
+        if (isDirty('disableCooling'))
+          setBooleanInDoc(doc, ['disable-cooling'], values.disableCooling);
         if (isDirty('saveCooldownStatus')) {
           setBooleanInDoc(doc, ['save-cooldown-status'], values.saveCooldownStatus);
         }
@@ -1228,16 +1289,17 @@ export function useVisualConfig() {
         const writeQuotaSwitchProject = isDirty('quotaSwitchProject');
         const writeQuotaSwitchPreviewModel = isDirty('quotaSwitchPreviewModel');
         const writeQuotaAntigravityCredits = isDirty('quotaAntigravityCredits');
-        if (writeQuotaSwitchProject || writeQuotaSwitchPreviewModel || writeQuotaAntigravityCredits) {
+        if (
+          writeQuotaSwitchProject ||
+          writeQuotaSwitchPreviewModel ||
+          writeQuotaAntigravityCredits
+        ) {
           ensureMapInDoc(doc, ['quota-exceeded']);
           if (writeQuotaSwitchProject) {
             doc.setIn(['quota-exceeded', 'switch-project'], values.quotaSwitchProject);
           }
           if (writeQuotaSwitchPreviewModel) {
-            doc.setIn(
-              ['quota-exceeded', 'switch-preview-model'],
-              values.quotaSwitchPreviewModel
-            );
+            doc.setIn(['quota-exceeded', 'switch-preview-model'], values.quotaSwitchPreviewModel);
           }
           if (writeQuotaAntigravityCredits) {
             doc.setIn(['quota-exceeded', 'antigravity-credits'], values.quotaAntigravityCredits);

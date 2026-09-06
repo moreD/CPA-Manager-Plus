@@ -69,6 +69,14 @@ export type PayloadFilterRule = {
   params: string[];
 };
 
+export type ClientApiKeyEntry = {
+  id: string;
+  name: string;
+  apiKey: string;
+  costLimits12h: string;
+  costLimits7d: string;
+};
+
 export interface StreamingConfig {
   keepaliveSeconds: string;
   bootstrapRetries: string;
@@ -103,6 +111,7 @@ export type VisualConfigValues = {
   rmPanelRepo: string;
   authDir: string;
   apiKeysText: string;
+  apiKeyEntries: ClientApiKeyEntry[];
   pluginsEnabled: boolean;
   pluginsDir: string;
   pluginStoreSourcesText: string;
@@ -178,6 +187,7 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   rmPanelRepo: '',
   authDir: '',
   apiKeysText: '',
+  apiKeyEntries: [],
   pluginsEnabled: false,
   pluginsDir: '',
   pluginStoreSourcesText: '',

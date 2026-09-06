@@ -1,4 +1,5 @@
 import type { ApiKeyAlias } from '@/services/api/usageService';
+import type { ClientApiKeyEntry } from '@/types/config';
 import { sha256Hex } from '@/utils/apiKeyHash';
 import { maskApiKey, maskSensitiveText } from '@/utils/format';
 import { formatApiKeyHashLabel, readString } from './base';
@@ -16,15 +17,17 @@ export const sanitizeApiKeyDisplayText = (value: string, fallback = '') => {
 };
 
 export const buildApiKeyDisplayMap = (
-  apiKeys: string[] = [],
+  apiKeys: Array<string | ClientApiKeyEntry> = [],
   apiKeyAliases: ApiKeyAlias[] = []
 ): Map<string, ApiKeyDisplayInfo> => {
   const map = new Map<string, ApiKeyDisplayInfo>();
-  apiKeys.forEach((apiKey) => {
+  apiKeys.forEach((entry) => {
+    const apiKey = typeof entry === 'string' ? entry : entry.apiKey;
     const hash = sha256Hex(apiKey).toLowerCase();
     if (!hash || map.has(hash)) return;
     const masked = maskApiKey(apiKey) || formatApiKeyHashLabel(hash);
-    map.set(hash, { label: masked, masked, copyValue: apiKey });
+    const name = typeof entry === 'string' ? '' : sanitizeApiKeyDisplayText(readString(entry.name));
+    map.set(hash, { label: name || masked, masked, copyValue: apiKey });
   });
   apiKeyAliases.forEach((entry) => {
     const hash = readString(entry.apiKeyHash).toLowerCase();

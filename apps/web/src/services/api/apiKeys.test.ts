@@ -70,29 +70,29 @@ describe('apiKeysApi.list response contract', () => {
   it('keeps the camelCase fallback', async () => {
     mocks.get.mockResolvedValue({ apiKeys: ['fallback'] });
 
-    await expect(apiKeysApi.list()).resolves.toEqual(['fallback']);
+    await expect(apiKeysApi.list()).resolves.toEqual([{ apiKey: 'fallback' }]);
   });
 
   it('prefers the kebab-case field when both fields exist', async () => {
     mocks.get.mockResolvedValue({ 'api-keys': ['canonical'], apiKeys: ['fallback'] });
 
-    await expect(apiKeysApi.list()).resolves.toEqual(['canonical']);
+    await expect(apiKeysApi.list()).resolves.toEqual([{ apiKey: 'canonical' }]);
   });
 
-  it('preserves canonical string values exactly', async () => {
+  it('normalizes canonical string values into API-key entries', async () => {
     mocks.get.mockResolvedValue({ 'api-keys': ['  sk-a  '] });
 
-    await expect(apiKeysApi.list()).resolves.toEqual(['  sk-a  ']);
+    await expect(apiKeysApi.list()).resolves.toEqual([{ apiKey: 'sk-a' }]);
   });
 
   it.each([
     ['a number', ['sk-a', 2]],
     ['null', ['sk-a', null]],
     ['an object', ['sk-a', { bad: true }]],
-  ])('rejects an API-key list containing %s elements', async (_label, keys) => {
+  ])('ignores invalid API-key list elements', async (_label, keys) => {
     mocks.get.mockResolvedValue({ 'api-keys': keys });
 
-    await expect(apiKeysApi.list()).rejects.toThrow('Invalid API key list response');
+    await expect(apiKeysApi.list()).resolves.toEqual([{ apiKey: 'sk-a' }]);
   });
 
   it.each([
@@ -113,6 +113,32 @@ describe('apiKeysApi.list response contract', () => {
 });
 
 describe('apiKeysApi value-based mutations', () => {
+  it('preserves decimal USD limits with the cost-limits wire name', async () => {
+    mocks.put.mockResolvedValue({});
+
+    await apiKeysApi.replace([
+      { apiKey: 'sk-a', name: 'Team A', costLimits: { '12h': 4.123456789, '7d': 120.5 } },
+    ]);
+
+    expect(mocks.put).toHaveBeenCalledWith('/api-keys', [
+      {
+        name: 'Team A',
+        'api-key': 'sk-a',
+        'cost-limits': { '12h': 4.123456789, '7d': 120.5 },
+      },
+    ]);
+  });
+
+  it('reads decimal USD limits from the API key contract', async () => {
+    mocks.get.mockResolvedValue({
+      'api-keys': [{ 'api-key': 'sk-a', 'cost-limits': { '12h': 4.5, '7d': 120.123456789 } }],
+    });
+
+    await expect(apiKeysApi.list()).resolves.toEqual([
+      { apiKey: 'sk-a', costLimits: { '12h': 4.5, '7d': 120.123456789 } },
+    ]);
+  });
+
   it('replaces an API key by value', async () => {
     mocks.patch.mockResolvedValue({});
 

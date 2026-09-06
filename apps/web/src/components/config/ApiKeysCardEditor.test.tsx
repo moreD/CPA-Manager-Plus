@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Button } from '@/components/ui/Button';
 import { sha256Hex } from '@/utils/apiKeyHash';
+import type { ClientApiKeyEntry } from '@/types/visualConfig';
 import { ApiKeysCardEditor, type ApiKeyMutation } from './ApiKeysCardEditor';
 
 const mocks = vi.hoisted(() => ({
@@ -81,6 +82,7 @@ type EditorMount = {
 
 const API_KEY_PLACEHOLDER = 'config_management.visual.api_keys.input_placeholder';
 const ALIAS_PLACEHOLDER = 'config_management.visual.api_keys.alias_placeholder';
+const LIMIT_PLACEHOLDER = 'config_management.visual.api_keys.limit_placeholder';
 
 let pendingConfirmation: Confirmation | null = null;
 const mountedRenderers: ReactTestRenderer[] = [];
@@ -126,6 +128,7 @@ const mountEditor = (
     onRefreshApiKeys?: () => Promise<string[]>;
     onApiKeyOperationStart?: () => void;
     onApiKeyOperationEnd?: () => void;
+    onChange?: (nextValue: ClientApiKeyEntry[]) => void;
   } = {}
 ): EditorMount => {
   let currentValue = initialValue;
@@ -148,6 +151,7 @@ const mountEditor = (
       onRefreshApiKeys={onRefreshApiKeys}
       onApiKeyOperationStart={onApiKeyOperationStart}
       onApiKeyOperationEnd={onApiKeyOperationEnd}
+      onChange={options.onChange}
     />
   );
 
@@ -344,6 +348,47 @@ describe('ApiKeysCardEditor immediate CPA persistence', () => {
     expect(events).toEqual(['cpa-get', 'alias']);
     expect(onPersistApiKeyMutation).not.toHaveBeenCalled();
     expect(mocks.saveApiKeyAliases).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows editing token limits when the Manager alias is empty', async () => {
+    const onChange = vi.fn();
+    const editor = mountEditor('sk-existing', { onChange });
+    await flush();
+
+    await clickButton(editor.renderer, 'config_management.visual.common.edit');
+    const limitInputs = editor.renderer.root.findAllByProps({ placeholder: LIMIT_PLACEHOLDER });
+    act(() => {
+      limitInputs[0].props.onChange({ target: { value: '1000000' } });
+    });
+    await clickButton(editor.renderer, 'config_management.visual.common.update');
+
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({ apiKey: 'sk-existing', costLimits12h: '1000000' }),
+    ]);
+    expect(mocks.saveApiKeyAliases).not.toHaveBeenCalled();
+    expect(editor.renderer.root.findAllByProps({ className: 'error-box' })).toHaveLength(0);
+    expect(editor.renderer.root.findAllByProps({ 'data-test-modal': 'open' })).toHaveLength(0);
+  });
+
+  it('hides Manager alias controls in an external CPA panel', async () => {
+    mocks.featureAvailability.panelHostMode = 'external_panel';
+    mocks.featureAvailability.managerServiceAvailable = false;
+    mocks.featureAvailability.managerServiceBase = '';
+    const editor = mountEditor('sk-existing');
+    await flush();
+
+    expect(
+      editor.renderer.root
+        .findAllByType(Button)
+        .filter(
+          (candidate) =>
+            candidate.props.children === 'config_management.visual.api_keys.alias_action'
+        )
+    ).toHaveLength(0);
+
+    await clickButton(editor.renderer, 'config_management.visual.common.edit');
+
+    expect(editor.renderer.root.findAllByProps({ placeholder: ALIAS_PLACEHOLDER })).toHaveLength(0);
   });
 
   it('does not create an alias for a key that disappeared from CPA', async () => {

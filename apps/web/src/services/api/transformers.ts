@@ -62,6 +62,36 @@ const normalizeNumber = (value: unknown): number | undefined => {
   return undefined;
 };
 
+const normalizeClientCostLimits = (
+  input: unknown
+): NonNullable<Config['apiKeys']>[number]['costLimits'] | undefined => {
+  if (!isRecord(input)) return undefined;
+  const limits: NonNullable<NonNullable<Config['apiKeys']>[number]['costLimits']> = {};
+  for (const key of ['12h', '7d'] as const) {
+    const value = Number(input[key]);
+    if (Number.isFinite(value) && value > 0) limits[key] = Number(value.toFixed(9));
+  }
+  return Object.keys(limits).length > 0 ? limits : undefined;
+};
+
+const normalizeClientApiKeyEntry = (item: unknown) => {
+  if (typeof item === 'string') {
+    const trimmed = item.trim();
+    return trimmed ? { apiKey: trimmed } : null;
+  }
+  if (!isRecord(item)) return null;
+  const apiKey = item['api-key'] ?? item.apiKey ?? item.key ?? item.Key;
+  const trimmed = String(apiKey ?? '').trim();
+  if (!trimmed) return null;
+  const name = String(item.name ?? item.Name ?? '').trim();
+  const costLimits = normalizeClientCostLimits(item['cost-limits'] ?? item.costLimits);
+  return {
+    apiKey: trimmed,
+    ...(name ? { name } : {}),
+    ...(costLimits ? { costLimits } : {}),
+  };
+};
+
 const normalizeModelAliases = (models: unknown): ModelAlias[] => {
   if (!Array.isArray(models)) return [];
   return models
@@ -507,7 +537,9 @@ export const normalizeConfigResponse = (raw: unknown): Config => {
   }
   const apiKeysRaw = raw['api-keys'] ?? raw.apiKeys;
   if (Array.isArray(apiKeysRaw)) {
-    config.apiKeys = apiKeysRaw.map((key) => String(key)).filter((key) => key.trim() !== '');
+    config.apiKeys = apiKeysRaw.map(normalizeClientApiKeyEntry).filter(Boolean) as NonNullable<
+      Config['apiKeys']
+    >;
   }
 
   const geminiList = raw['gemini-api-key'] ?? raw.geminiApiKey ?? raw.geminiApiKeys;

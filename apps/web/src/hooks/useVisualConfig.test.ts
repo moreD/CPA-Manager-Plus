@@ -50,7 +50,18 @@ describe('useVisualConfig', () => {
 
     act(() => {
       expect(harness.getCurrent().loadVisualValuesFromYaml(initialYaml).ok).toBe(true);
-      harness.getCurrent().setVisualValues({ apiKeysText: 'old-key\nnew-key' });
+      harness.getCurrent().setVisualValues({
+        apiKeyEntries: [
+          ...harness.getCurrent().visualValues.apiKeyEntries,
+          {
+            id: 'new-key',
+            name: '',
+            apiKey: 'new-key',
+            costLimits12h: '',
+            costLimits7d: '',
+          },
+        ],
+      });
     });
     expect(harness.getCurrent().visualDirty).toBe(true);
 

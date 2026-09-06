@@ -14,7 +14,7 @@ describe('config sections', () => {
     const config: Config = {
       debug: true,
       proxyUrl: 'http://proxy.local',
-      apiKeys: ['key-1'],
+      apiKeys: [{ apiKey: 'key-1' }],
       xaiApiKeys: [{ apiKey: 'xai-key', baseUrl: 'https://api.x.ai/v1' }],
       raw: {
         custom: 'fallback',
@@ -23,7 +23,7 @@ describe('config sections', () => {
 
     expect(extractConfigSectionValue(config, 'debug')).toBe(true);
     expect(extractConfigSectionValue(config, 'proxy-url')).toBe('http://proxy.local');
-    expect(extractConfigSectionValue(config, 'api-keys')).toEqual(['key-1']);
+    expect(extractConfigSectionValue(config, 'api-keys')).toEqual([{ apiKey: 'key-1' }]);
     expect(extractConfigSectionValue(config, 'xai-api-key')).toEqual(config.xaiApiKeys);
     expect(extractConfigSectionValue(config, 'custom' as never)).toBe('fallback');
   });
