@@ -104,6 +104,36 @@ const buildAccountRows = (
   );
 
 describe('accountRows', () => {
+  it('reads persisted Codex workspace names and includes them in search', () => {
+    const rows = buildAccountRows(
+      [
+        {
+          name: 'codex-team.json',
+          type: 'codex',
+          workspace_name: 'Production Workspace',
+        },
+        {
+          name: 'gemini.json',
+          type: 'gemini',
+          workspace_name: 'Ignored Workspace',
+        },
+      ],
+      emptyStores()
+    );
+
+    expect(rows[0].workspaceName).toBe('Production Workspace');
+    expect(rows[1].workspaceName).toBe('');
+    expect(
+      filterAccountRows(rows, {
+        provider: 'all',
+        status: 'all',
+        plan: 'all',
+        quotaBand: 'all',
+        search: 'production workspace',
+      }).map((row) => row.fileName)
+    ).toEqual(['codex-team.json']);
+  });
+
   it('suppresses only handled inspection authentication results for the reauthenticated identity', () => {
     const authenticationResult: AccountInspectionResult = {
       id: 1,

@@ -177,6 +177,7 @@ export interface AccountRow {
   selectionKey: string;
   fileName: string;
   accountLabel: string;
+  workspaceName?: string;
   provider: string;
   planType: string | null;
   /** Canonical plan identity used by filtering/grouping; planType remains raw data. */
@@ -452,6 +453,8 @@ export const buildAccountRows = (
       selectionKey,
       fileName: file.name,
       accountLabel: resolveAccountLabel(file),
+      workspaceName:
+        provider === 'codex' ? readString(file.workspaceName ?? file.workspace_name) : '',
       provider,
       planType: quota.planType ?? readPlanType(file),
       canonicalPlanType: getCanonicalPlanType(provider, quota.planType ?? readPlanType(file)),
@@ -675,6 +678,7 @@ export const filterAccountRows = (rows: AccountRow[], filters: AccountRowFilters
     if (!search) return true;
     const values = [
       row.accountLabel,
+      row.workspaceName,
       row.fileName,
       row.provider,
       row.planType,

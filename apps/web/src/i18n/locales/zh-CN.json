@@ -1707,6 +1707,7 @@
     "reset_partial_success": "{{name}} 已完成重置，但最新额度刷新失败，请手动刷新或稍后重试。",
     "reset_credits_label": "重置",
     "reset_credits_available_label": "剩余",
+    "reset_credits_applicable_label": "当前可用",
     "reset_credits_unit": "次",
     "reset_credits_card_subtitle": "可用的 Codex 重置额度",
     "reset_credits_expected_expiry_label": "预计过期时间",

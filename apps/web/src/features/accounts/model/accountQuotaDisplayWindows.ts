@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next';
 import { getCredentialScopedQuotaState } from '@/utils/quota/credentialScope';
+import { buildCodexRuntimeQuotaState } from './codexRuntimeQuota';
 import type {
   AuthFileItem,
   ClaudeExtraUsage,
@@ -409,9 +410,10 @@ const buildCodexQuotaDisplayWindows = (
   row: AccountRow,
   options: BuildAccountQuotaDisplayWindowsOptions
 ): AccountQuotaDisplayWindow[] => {
-  const quota =
+  const storedQuota =
     options.getDisplayCodexQuota?.(row.raw) ??
     getCredentialScopedQuotaState(options.stores.codexQuota, row.raw);
+  const quota = buildCodexRuntimeQuotaState(row.raw, storedQuota) ?? storedQuota;
   if (!quota?.windows?.length) return [];
   return quota.windows.map((window) =>
     buildAccountQuotaDisplayWindow({

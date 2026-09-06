@@ -137,6 +137,7 @@ export function AccountQuotaTab({
 
   const hasResetRecords =
     detailView.quota.resetCreditsAvailableCount !== null ||
+    detailView.quota.resetCreditsApplicableAvailableCount !== null ||
     detailView.quota.resetCreditExpiries.length > 0;
   const shouldShowResetRecords = detailView.identity.provider === 'codex' && hasResetRecords;
 
@@ -304,6 +305,15 @@ export function AccountQuotaTab({
                   <div className={styles.quotaResetCount} data-quota-reset-count="true">
                     <span>{t('codex_quota.reset_credits_available_label')}</span>
                     <strong>{detailView.quota.resetCreditsAvailableCount}</strong>
+                    <span className={styles.quotaResetCountUnit}>
+                      {t('codex_quota.reset_credits_unit')}
+                    </span>
+                  </div>
+                ) : null}
+                {detailView.quota.resetCreditsApplicableAvailableCount !== null ? (
+                  <div className={styles.quotaResetCount} data-quota-reset-applicable-count="true">
+                    <span>{t('codex_quota.reset_credits_applicable_label')}</span>
+                    <strong>{detailView.quota.resetCreditsApplicableAvailableCount}</strong>
                     <span className={styles.quotaResetCountUnit}>
                       {t('codex_quota.reset_credits_unit')}
                     </span>

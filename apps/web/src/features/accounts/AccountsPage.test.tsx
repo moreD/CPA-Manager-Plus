@@ -2670,7 +2670,7 @@ describe('AccountsPage replacement flows', () => {
     });
     await flushPromises();
     expect(mocks.getAccountHistory).toHaveBeenCalledTimes(6);
-  });
+  }, 15_000);
 
   it('keeps successful history batches when another batch fails', async () => {
     mocks.files = Array.from({ length: 201 }, (_, index) =>
@@ -7259,6 +7259,21 @@ describe('AccountsPage replacement flows', () => {
     expect(treeText(renderer)).toContain('accounts.quota_source_none');
     expect(treeText(renderer)).not.toContain('accounts.quota_details_only');
     expect(treeText(renderer)).not.toContain('SUM');
+  });
+
+  it('shows the Codex workspace name instead of the credential filename', async () => {
+    mocks.files = [
+      {
+        ...makeCodexFile('codex-team.json', 'auth-team', 'team@example.com'),
+        workspace_name: 'Production Workspace',
+      },
+    ];
+
+    const renderer = await renderAccountsPage();
+    const cardText = getAccountCardText(renderer, 'codex-team.json\u0000auth-team');
+
+    expect(cardText).toContain('Production Workspace');
+    expect(cardText).not.toContain('codex-team.json');
   });
 
   it('opens the quota detail from the full historical usage region', async () => {

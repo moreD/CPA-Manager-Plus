@@ -1709,6 +1709,7 @@
     "reset_partial_success": "{{name}} quota reset completed, but refreshing the latest quota failed. Refresh manually or retry later.",
     "reset_credits_label": "Resets",
     "reset_credits_available_label": "Remaining",
+    "reset_credits_applicable_label": "Applicable",
     "reset_credits_unit": "resets",
     "reset_credits_card_subtitle": "Available Codex reset credits",
     "reset_credits_expected_expiry_label": "Expected expiry",

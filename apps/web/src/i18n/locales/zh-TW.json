@@ -1707,6 +1707,7 @@
     "reset_partial_success": "{{name}} 已完成重置，但最新配額刷新失敗，請手動刷新或稍後重試。",
     "reset_credits_label": "重置",
     "reset_credits_available_label": "剩餘",
+    "reset_credits_applicable_label": "目前可用",
     "reset_credits_unit": "次",
     "reset_credits_card_subtitle": "可用的 Codex 重置配額",
     "reset_credits_expected_expiry_label": "預計到期時間",

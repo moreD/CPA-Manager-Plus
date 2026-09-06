@@ -187,6 +187,8 @@ export interface CodexSpendControlInfo {
 export interface CodexRateLimitResetCreditsInfo {
   available_count?: number | string;
   availableCount?: number | string;
+  applicable_available_count?: number | string;
+  applicableAvailableCount?: number | string;
 }
 
 export interface CodexRateLimitResetCredit {
@@ -390,6 +392,7 @@ export interface CodexQuotaState extends CredentialScopedQuotaState {
   primaryOverSecondaryLimitPercent?: number | null;
   subscriptionActiveUntil?: string | number | null;
   rateLimitResetCreditsAvailableCount?: number | null;
+  rateLimitResetCreditsApplicableAvailableCount?: number | null;
   rateLimitResetCredits?: CodexRateLimitResetCredit[];
   rateLimitResetCreditsError?: string | null;
   error?: string;
@@ -401,6 +404,29 @@ export interface CodexQuotaState extends CredentialScopedQuotaState {
   observedTraceId?: string;
   observedErrorKind?: string;
   observedErrorCode?: string;
+}
+
+export interface CodexRuntimeQuotaWindow {
+  used?: number | string;
+  limit?: number | string;
+  used_percent?: number | string;
+  usedPercent?: number | string;
+  used_percent_known?: boolean;
+  usedPercentKnown?: boolean;
+  limit_window_seconds?: number | string;
+  limitWindowSeconds?: number | string;
+  next_fresh_at?: string;
+  nextFreshAt?: string;
+  refreshed_at?: string;
+  refreshedAt?: string;
+}
+
+export interface CodexRuntimeQuotaInfo {
+  five_hour?: CodexRuntimeQuotaWindow | null;
+  fiveHour?: CodexRuntimeQuotaWindow | null;
+  weekly?: CodexRuntimeQuotaWindow | null;
+  rate_limit_reset_credits?: CodexRateLimitResetCreditsInfo | null;
+  rateLimitResetCredits?: CodexRateLimitResetCreditsInfo | null;
 }
 
 // Kimi API payload types

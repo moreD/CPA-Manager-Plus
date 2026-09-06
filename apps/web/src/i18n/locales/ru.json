@@ -1710,6 +1710,7 @@
     "reset_failed": "Не удалось сбросить квоту {{name}}: {{message}}",
     "reset_credits_label": "Сбросы",
     "reset_credits_available_label": "Осталось",
+    "reset_credits_applicable_label": "Доступно сейчас",
     "reset_credits_unit": "сбросов",
     "reset_credits_card_subtitle": "Доступные сбросы квоты Codex",
     "reset_credits_expected_expiry_label": "Ожидаемый срок действия",

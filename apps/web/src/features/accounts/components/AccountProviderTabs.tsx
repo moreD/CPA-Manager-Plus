@@ -4,10 +4,16 @@ import { SegmentedTabs, type SegmentedTabItem } from '@/components/ui/SegmentedT
 import { IconFilterAll, IconKey } from '@/components/ui/icons';
 import { getAuthFileIcon, type ResolvedTheme } from '@/features/authFiles/constants';
 import { getProviderLabel } from '@/features/accounts/model/accountsPagePresentation';
+import type { AccountQuotaDisplayWindow } from '@/features/accounts/model/accountQuotaDisplayWindows';
+import {
+  buildAccountQuotaAggregates,
+  formatAccountQuotaAggregatePercent,
+} from '@/features/accounts/model/accountQuotaAggregates';
 import styles from './AccountProviderTabs.module.scss';
 
 type AccountProviderTabRow = {
   provider: string;
+  quotaWindows?: readonly AccountQuotaDisplayWindow[];
 };
 
 interface AccountProviderTabsProps {
@@ -29,8 +35,10 @@ export function AccountProviderTabs({
 
   const tabs = useMemo<ReadonlyArray<SegmentedTabItem<string>>>(() => {
     const counts = new Map<string, number>();
+    const windows = new Map<string, ReadonlyArray<ReadonlyArray<AccountQuotaDisplayWindow>>>();
     rows.forEach((row) => {
       counts.set(row.provider, (counts.get(row.provider) ?? 0) + 1);
+      windows.set(row.provider, [...(windows.get(row.provider) ?? []), row.quotaWindows ?? []]);
     });
 
     const providers = Array.from(counts.keys()).sort((left, right) => left.localeCompare(right));
@@ -42,6 +50,7 @@ export function AccountProviderTabs({
       const isAll = provider === ALL_PROVIDERS;
       const label = isAll ? t('accounts.filter_all') : getProviderLabel(provider, t);
       const icon = isAll ? null : getAuthFileIcon(provider, resolvedTheme);
+      const aggregates = isAll ? [] : buildAccountQuotaAggregates(windows.get(provider) ?? []);
 
       return (
         <span className={styles.tabContent}>
@@ -56,6 +65,12 @@ export function AccountProviderTabs({
           </span>
           <span className={styles.tabLabel}>{label}</span>
           <span className={styles.tabCount}>{count}</span>
+          {aggregates.map((aggregate) => (
+            <span key={aggregate.key} className={styles.quotaAggregate}>
+              {aggregate.label}{' '}
+              {formatAccountQuotaAggregatePercent(aggregate.averageRemainingPercent)}%
+            </span>
+          ))}
         </span>
       );
     };

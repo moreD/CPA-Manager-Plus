@@ -110,6 +110,18 @@
   line-height: 1;
 }
 
+.quotaAggregate {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accounts-primary) 10%, var(--accounts-surface));
+  color: var(--accounts-text);
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 20px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+
 .tabs :global([role='tab'][aria-selected='true']) .tabCount {
   background: color-mix(in srgb, var(--accounts-primary) 22%, var(--accounts-surface));
   color: var(--accounts-brand-active);

@@ -145,6 +145,7 @@ import {
   type PendingAccountDirectReauth,
 } from '@/features/accounts/model/accountDirectReauth';
 import { buildAccountRecommendations } from '@/features/accounts/model/quotaRecommendations';
+import { buildCodexRuntimeQuotaState } from '@/features/accounts/model/codexRuntimeQuota';
 import {
   buildAccountListItem,
   buildRecommendationBySelectionKey,
@@ -3331,6 +3332,11 @@ export function AccountsPage() {
   const getDisplayCodexQuota = useCallback(
     (file: AuthFileItem): CodexQuotaState | undefined => {
       if (normalizeAccountProvider(file) !== CODEX_CONFIG.type) return undefined;
+      const providerQuota = getActiveCodexQuota(file);
+      const runtimeQuota = buildCodexRuntimeQuotaState(file, providerQuota);
+      // A background credential failure is authoritative. Do not let an older
+      // successful header observation make an unusable credential look healthy.
+      if (runtimeQuota?.status === 'error') return runtimeQuota;
       const selectionKey = getAuthFileSelectionKey(file);
       const headerQuota = getFreshCodexHeaderQuota(file);
       const inspection = accountInspectionBySelectionKey.get(selectionKey);
@@ -3345,7 +3351,7 @@ export function AccountsPage() {
       );
       const boundary = getCredentialEvidenceBoundary(file);
       const reconciled = reconcileCodexQuotaEvidence({
-        providerQuota: getActiveCodexQuota(file),
+        providerQuota: runtimeQuota ?? providerQuota,
         headerQuota,
         inspectionQuota,
         credentialRefreshAtMs: readAuthFileCredentialRefreshAtMs(file) ?? 0,
@@ -4225,6 +4231,11 @@ export function AccountsPage() {
     (fileName: string) => getDisplayText(fileName),
     [getDisplayText]
   );
+  const getAccountSecondaryLabel = useCallback(
+    (row: AccountRow) =>
+      row.provider === 'codex' && row.workspaceName ? row.workspaceName : row.fileName,
+    []
+  );
   const translateQuotaWindowLabel = useCallback(
     (
       label: string | undefined,
@@ -4272,6 +4283,14 @@ export function AccountsPage() {
     }
     return result;
   }, [buildQuotaDisplayWindows, pageRows, selectedRow]);
+  const providerTabRows = useMemo(
+    () =>
+      rows.map((row) => ({
+        provider: row.provider,
+        quotaWindows: buildQuotaDisplayWindows(row),
+      })),
+    [buildQuotaDisplayWindows, rows]
+  );
   const quotaWindowDefinitionsByRowKey = useMemo(() => {
     const result = new Map<string, AccountQuotaWindowDefinition[]>();
     quotaDisplayWindowsByRowKey.forEach((windows, rowKey) => {
@@ -6413,7 +6432,7 @@ export function AccountsPage() {
   const renderToolbar = () => (
     <>
       <AccountProviderTabs
-        rows={rows}
+        rows={providerTabRows}
         value={providerFilter}
         onChange={setProviderFilter}
         resolvedTheme={resolvedTheme}
@@ -7037,14 +7056,18 @@ export function AccountsPage() {
                     <button
                       type="button"
                       className={styles.accountIdentityCopyTarget}
-                      title={row.fileName}
-                      aria-label={`${t('common.copy')} ${row.fileName}`}
+                      title={getAccountSecondaryLabel(row)}
+                      aria-label={`${t('common.copy')} ${getAccountSecondaryLabel(row)}`}
                       onClick={(event) =>
-                        void handleCopyIdentityText(event, row.fileName, `${row.selectionKey}:file`)
+                        void handleCopyIdentityText(
+                          event,
+                          getAccountSecondaryLabel(row),
+                          `${row.selectionKey}:file`
+                        )
                       }
                     >
                       <span className={styles.accountCardFile}>
-                        {getDisplayFileName(row.fileName)}
+                        {getDisplayFileName(getAccountSecondaryLabel(row))}
                       </span>
                     </button>
                     {copiedIdentityKey === `${row.selectionKey}:file` ? (
@@ -7513,11 +7536,11 @@ export function AccountsPage() {
                 <button
                   type="button"
                   className={styles.drawerFileNameCopy}
-                  onClick={() => copyTextWithNotification(selectedRow.fileName)}
+                  onClick={() => copyTextWithNotification(getAccountSecondaryLabel(selectedRow))}
                   title={t('common.copy', { defaultValue: '点击复制' })}
-                  aria-label={`${t('common.copy', { defaultValue: '点击复制' })} ${getDisplayFileName(selectedRow.fileName)}`}
+                  aria-label={`${t('common.copy', { defaultValue: '点击复制' })} ${getDisplayFileName(getAccountSecondaryLabel(selectedRow))}`}
                 >
-                  {getDisplayFileName(selectedRow.fileName)}
+                  {getDisplayFileName(getAccountSecondaryLabel(selectedRow))}
                   <IconCopy size={12} />
                 </button>
               </span>

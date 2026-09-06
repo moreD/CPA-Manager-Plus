@@ -19,6 +19,7 @@ import type {
   CodexQuotaData,
   KimiQuotaData,
 } from '@/utils/quota';
+import { resetCodexQuota } from '@/services/api/codexQuota';
 import {
   buildCodexQuotaWindows,
   fetchAntigravityQuota,
@@ -76,6 +77,12 @@ export interface QuotaConfig<TState, TData> {
     snapshot: UsageHeaderSnapshot | undefined,
     t: TFunction
   ) => TState | undefined;
+  resetQuota?: (
+    file: AuthFileItem,
+    t: TFunction,
+    requestScope?: AuthFilesApiRequestScope
+  ) => Promise<TData>;
+  canResetQuota?: (file: AuthFileItem, quota: TState | undefined) => boolean;
 }
 
 export const getQuotaStoreKey = <TState, TData>(
@@ -633,6 +640,8 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
     spendControlReached: data.spendControlReached,
     spendControlIndividualLimit: data.spendControlIndividualLimit,
     rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,
+    rateLimitResetCreditsApplicableAvailableCount:
+      data.rateLimitResetCreditsApplicableAvailableCount,
     rateLimitResetCredits: data.rateLimitResetCredits,
     rateLimitResetCreditsError: data.rateLimitResetCreditsError,
     ...buildQuotaCredentialIdentity(file),
@@ -652,6 +661,13 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
   buildFailureState: buildCodexQuotaFailureState,
   scopeState: scopeCredentialQuotaState,
   buildObservedState: buildObservedCodexQuotaState,
+  resetQuota: resetCodexQuota,
+  canResetQuota: (_file, quota) =>
+    quota?.status === 'success' &&
+    (quota.rateLimitResetCreditsAvailableCount ?? 0) > 0 &&
+    (quota.rateLimitResetCreditsApplicableAvailableCount === null ||
+      quota.rateLimitResetCreditsApplicableAvailableCount === undefined ||
+      quota.rateLimitResetCreditsApplicableAvailableCount > 0),
 };
 
 export const KIMI_CONFIG: QuotaConfig<KimiQuotaState, KimiQuotaData> = {

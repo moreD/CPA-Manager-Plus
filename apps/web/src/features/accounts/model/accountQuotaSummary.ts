@@ -24,8 +24,12 @@ import {
   hasUsageHeaderDiagnosticSignal,
 } from '@/utils/usageHeaderSnapshots';
 import { getCredentialScopedQuotaState } from '@/utils/quota/credentialScope';
-import { isCodexMainQuotaModelScope, isCodexMainQuotaWindow } from '@/utils/quota/codexQuota';
+import {
+  isCodexMainQuotaModelScope,
+  isCodexMainQuotaWindow,
+} from '@/utils/quota/codexQuota';
 import { resolveAuthFilePlanType, resolveAntigravityPlanType } from '@/utils/plans';
+import { buildCodexRuntimeQuotaState } from './codexRuntimeQuota';
 
 export type AccountQuotaStatus =
   | 'unknown'
@@ -862,58 +866,60 @@ export const resolveAccountQuota = (
     const quota =
       overrides?.codexQuotaBySelectionKey?.get(selectionKey) ??
       getCredentialScopedQuotaState(stores.codexQuota, file);
+    const runtimeQuota = buildCodexRuntimeQuotaState(file, quota);
+    const activeQuota = runtimeQuota ?? quota;
     const headerSnapshot = overrides?.codexHeaderSnapshotBySelectionKey?.get(selectionKey);
     const headerObservationFields = quotaObservationFieldsFromSnapshot(headerSnapshot);
     const headerPlanType = readString(getHeaderSnapshotPlanType(headerSnapshot)).toLowerCase();
     const observedPlanType = headerPlanType || filePlanType;
-    if (!quota) {
+    if (!activeQuota) {
       return mergeQuotaObservationFields(emptyQuota(observedPlanType), headerObservationFields);
     }
-    if (quota.status === 'loading') {
+    if (activeQuota.status === 'loading') {
       return mergeQuotaObservationFields(
-        loadingQuota(quota.planType ?? observedPlanType),
+        loadingQuota(activeQuota.planType ?? observedPlanType),
         headerObservationFields
       );
     }
-    if (quota.status === 'error') {
-      if (quota.windows.length > 0) {
+    if (activeQuota.status === 'error') {
+      if (activeQuota.windows.length > 0) {
         return mergeQuotaObservationFields(
           {
             ...quotaFromUsedWindows(
-              codexMainQuotaWindows(quota),
-              quota.planType ?? observedPlanType
+              codexMainQuotaWindows(activeQuota),
+              activeQuota.planType ?? observedPlanType
             ),
-            error: quota.error,
-            errorStatus: quota.errorStatus,
-            fetchedAtMs: quota.fetchedAtMs,
-            failedAtMs: quota.failedAtMs,
+            error: activeQuota.error,
+            errorStatus: activeQuota.errorStatus,
+            fetchedAtMs: activeQuota.fetchedAtMs,
+            failedAtMs: activeQuota.failedAtMs,
           },
           headerObservationFields
         );
       }
       return mergeQuotaObservationFields(
         quotaFromError(
-          quota.error,
-          quota.planType ?? observedPlanType,
-          quota.errorStatus,
-          quota.failedAtMs
+          activeQuota.error,
+          activeQuota.planType ?? observedPlanType,
+          activeQuota.errorStatus,
+          activeQuota.failedAtMs
         ),
         headerObservationFields
       );
     }
     if (
-      quota.quotaInventoryObserved === true &&
-      quota.windows.length === 0 &&
-      !quota.rateLimitReachedType &&
-      quota.spendControlReached !== true &&
-      quota.creditsOverageLimitReached !== true
+      activeQuota.quotaInventoryObserved === true &&
+      activeQuota.windows.length === 0 &&
+      !activeQuota.rateLimitReachedType &&
+      activeQuota.spendControlReached !== true &&
+      activeQuota.creditsOverageLimitReached !== true
     ) {
       return mergeQuotaObservationFields(
         {
           ...quotaFromUsedWindows(
-            codexMainQuotaWindows(quota),
-            quota.planType ?? observedPlanType,
-            quotaObservationFields(quota)
+            codexMainQuotaWindows(activeQuota),
+            activeQuota.planType ?? observedPlanType,
+            quotaObservationFields(activeQuota)
           ),
           status: 'ok',
         },
@@ -922,9 +928,9 @@ export const resolveAccountQuota = (
     }
     return mergeQuotaObservationFields(
       quotaFromUsedWindows(
-        codexMainQuotaWindows(quota),
-        quota.planType ?? observedPlanType,
-        quotaObservationFields(quota)
+        codexMainQuotaWindows(activeQuota),
+        activeQuota.planType ?? observedPlanType,
+        quotaObservationFields(activeQuota)
       ),
       headerObservationFields
     );

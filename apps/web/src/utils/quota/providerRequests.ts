@@ -102,6 +102,7 @@ export type CodexQuotaData = {
   spendControlReached?: boolean | null;
   spendControlIndividualLimit?: number | null;
   rateLimitResetCreditsAvailableCount: number | null;
+  rateLimitResetCreditsApplicableAvailableCount?: number | null;
   rateLimitResetCredits: CodexRateLimitResetCredit[];
   rateLimitResetCreditsError: string | null;
 };
@@ -375,6 +376,15 @@ const resolveCodexRateLimitResetCreditsAvailableCount = (
   return normalizeNumberValue(credits?.available_count ?? credits?.availableCount);
 };
 
+const resolveCodexRateLimitResetCreditsApplicableAvailableCount = (
+  payload: CodexUsagePayload
+): number | null => {
+  const credits = payload.rate_limit_reset_credits ?? payload.rateLimitResetCredits;
+  return normalizeNumberValue(
+    credits?.applicable_available_count ?? credits?.applicableAvailableCount
+  );
+};
+
 const resolveCodexSubscriptionActiveUntil = (
   payload: CodexUsagePayload
 ): string | number | null => {
@@ -491,6 +501,15 @@ export const fetchCodexQuota = async (
   t: TFunction,
   requestScope?: ApiClientRequestScope
 ): Promise<CodexQuotaData> => {
+  const backgroundErrorStatus = normalizeNumberValue(
+    file.quota_refresh_error_status ?? file.quotaRefreshErrorStatus
+  );
+  if (backgroundErrorStatus === 401) {
+    throw createStatusError(
+      normalizeStringValue(file.quota_refresh_error ?? file.quotaRefreshError) ?? 'unauthorized',
+      401
+    );
+  }
   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
   const authIndex = normalizeAuthIndex(rawAuthIndex);
   if (!authIndex) {
@@ -537,6 +556,8 @@ export const fetchCodexQuota = async (
       resetCredits,
       usageResetCreditsAvailableCount
     ),
+    rateLimitResetCreditsApplicableAvailableCount:
+      resolveCodexRateLimitResetCreditsApplicableAvailableCount(payload),
     rateLimitResetCredits: resetCredits.credits,
     rateLimitResetCreditsError: resetCredits.error,
   };

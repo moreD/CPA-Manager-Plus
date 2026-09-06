@@ -4,6 +4,7 @@
  */
 
 import type { RecentRequestBucket } from '@/utils/recentRequests';
+import type { CodexRuntimeQuotaInfo } from './quota';
 
 export type AuthFileType =
   | 'qwen'
@@ -38,10 +39,20 @@ export interface AuthFileItem {
   failed?: unknown;
   project_id?: string;
   projectId?: string;
+  workspace_name?: string;
+  workspaceName?: string;
   gemini_virtual_project?: string;
   geminiVirtualProject?: string;
   recent_requests?: RecentRequestBucket[];
   recentRequests?: RecentRequestBucket[];
+  runtime_quota?: CodexRuntimeQuotaInfo | null;
+  runtimeQuota?: CodexRuntimeQuotaInfo | null;
+  last_quota_seen_at?: string;
+  lastQuotaSeenAt?: string;
+  quota_refresh_error?: string;
+  quotaRefreshError?: string;
+  quota_refresh_error_status?: number;
+  quotaRefreshErrorStatus?: number;
   [key: string]: unknown;
 }
 

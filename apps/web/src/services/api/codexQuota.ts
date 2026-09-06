@@ -8,6 +8,7 @@ import {
 import { buildCodexUsageRequestHeaders } from '@/utils/quota/codexRequestHeaders';
 import { createStatusError } from '@/utils/quota/formatters';
 import { normalizeAuthIndex, parseCodexUsagePayload } from '@/utils/quota/parsers';
+import { fetchCodexQuota, type CodexQuotaData } from '@/utils/quota/providerRequests';
 import { resolveCodexChatgptAccountId } from '@/utils/quota/resolvers';
 import { apiCallApi, getApiCallErrorMessage, type ApiCallResult } from './apiCall';
 import { createScopedApiRequestConfig, type ApiClientRequestScope } from './client';
@@ -99,4 +100,13 @@ export const consumeCodexRateLimitResetCredit = async (
   }
 
   return result;
+};
+
+export const resetCodexQuota = async (
+  file: AuthFileItem,
+  t: TFunction,
+  requestScope?: ApiClientRequestScope
+): Promise<CodexQuotaData> => {
+  await consumeCodexRateLimitResetCredit(file, t, requestScope);
+  return fetchCodexQuota(file, t, requestScope);
 };
