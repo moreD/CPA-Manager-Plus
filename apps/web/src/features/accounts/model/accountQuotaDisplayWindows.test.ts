@@ -186,47 +186,77 @@ describe('accountQuotaDisplayWindows', () => {
     expect(window.resetAccuracy).toBe('unknown');
   });
 
-  it('uses auth-index scoped Codex quota and preserves request window ranges', () => {
-    const resetAtMs = Date.parse('2026-07-09T14:00:00Z');
-    const quota: CodexQuotaState = {
-      status: 'success',
-      windows: [
-        {
-          id: 'primary',
-          label: 'Primary',
-          usedPercent: 75,
-          resetLabel: '2026-07-09T14:00:00Z',
-          resetAtMs,
-          resetAccuracy: 'exact',
-          limitWindowSeconds: 18_000,
-        },
-      ],
-    };
-    const row = buildRow({ name: 'shared.codex.json', type: 'codex', authIndex: '1' });
+  it.each(
+    (['cache', 'runtime'] as const).flatMap((source) =>
+      [
+        { id: 'primary', kind: 'five_hour', seconds: 18_000, shortLabel: '5H' },
+        { id: 'weekly', kind: 'weekly', seconds: 604_800, shortLabel: '7D' },
+        { id: 'monthly', kind: 'monthly', seconds: 2_592_000, shortLabel: '30D' },
+      ].map((window) => ({ source, ...window }))
+    )
+  )(
+    'shows $source Codex $kind quota in the list and preserves its range',
+    ({ source, id, kind, seconds, shortLabel }) => {
+      const resetAtMs = Date.parse('2026-07-09T14:00:00Z');
+      const quota: CodexQuotaState = {
+        status: 'success',
+        windows: [
+          {
+            id,
+            label: shortLabel,
+            usedPercent: 75,
+            resetLabel: '2026-07-09T14:00:00Z',
+            resetAtMs,
+            resetAccuracy: 'exact',
+            limitWindowSeconds: seconds,
+          },
+        ],
+      };
+      const row = buildRow({
+        name: 'shared.codex.json',
+        type: 'codex',
+        authIndex: '1',
+        ...(source === 'runtime'
+          ? {
+              runtime_quota: {
+                [id === 'primary' ? 'five_hour' : 'weekly']: {
+                  used_percent: 75,
+                  used_percent_known: true,
+                  limit_window_seconds: seconds,
+                  next_fresh_at: '2026-07-09T14:00:00Z',
+                  refreshed_at: '2026-07-09T12:00:00Z',
+                },
+              },
+            }
+          : {}),
+      });
 
-    const windows = buildAccountQuotaDisplayWindows(row, {
-      stores: emptyStores(),
-      getDisplayCodexQuota: () => quota,
-      translateQuotaWindowLabel,
-      t,
-      nowMs: Date.parse('2026-07-09T12:00:00Z'),
-    });
+      const windows = buildAccountQuotaDisplayWindows(row, {
+        stores: emptyStores(),
+        getDisplayCodexQuota: source === 'cache' ? () => quota : undefined,
+        translateQuotaWindowLabel,
+        t,
+        nowMs: Date.parse('2026-07-09T12:00:00Z'),
+      });
 
-    expect(windows).toHaveLength(1);
-    expect(windows[0]).toMatchObject({
-      key: 'primary',
-      kind: 'five_hour',
-      remainingPercent: 25,
-      usedPercent: 75,
-      resetAtMs,
-      resetAccuracy: 'exact',
-      limitWindowSeconds: 18_000,
-      source: 'codex',
-    });
-    expect(windows[0].fromMs).toBe(Date.parse('2026-07-09T09:00:00Z'));
-    expect(windows[0].toMs).toBe(Date.parse('2026-07-09T12:00:00Z'));
-    expect(getQuotaWindowShortLabel(windows[0])).toBe('5H');
-  });
+      expect(windows).toHaveLength(1);
+      expect(windows[0]).toMatchObject({
+        key: source === 'runtime' && id === 'primary' ? 'five-hour' : id,
+        kind,
+        remainingPercent: 25,
+        usedPercent: 75,
+        resetAtMs,
+        resetAccuracy: 'exact',
+        limitWindowSeconds: seconds,
+        source: 'codex',
+        modelScope: { kind: 'family', key: 'codex_main', complete: true },
+      });
+      expect(isStandardAccountQuotaListWindow(windows[0])).toBe(true);
+      expect(windows[0].fromMs).toBe(resetAtMs - seconds * 1000);
+      expect(windows[0].toMs).toBe(Date.parse('2026-07-09T12:00:00Z'));
+      expect(getQuotaWindowShortLabel(windows[0])).toBe(shortLabel);
+    }
+  );
 
   it('maps Claude quota windows through translated labels', () => {
     const stores = {

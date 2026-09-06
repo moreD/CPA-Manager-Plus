@@ -6,6 +6,7 @@ import type {
   CodexRuntimeQuotaWindow,
 } from '@/types';
 import { normalizeAuthIndex } from '@/utils/authIndex';
+import { CODEX_MAIN_QUOTA_SCOPE_KEY } from '@/utils/quota/codexQuota';
 import { formatQuotaResetTime } from '@/utils/quota/formatters';
 import { resolveCodexPlanType } from '@/utils/quota/resolvers';
 
@@ -49,10 +50,10 @@ const buildWindow = (
   if (!hasKnownPercent && usedPercent === 0 && !resetAt && !refreshedAt && !duration) return null;
   if (usedPercent === null && !resetAt && !refreshedAt) return null;
 
-  const isFiveHour = duration === 18_000 || fallbackId === 'runtime-five-hour';
+  const isFiveHour = duration === 18_000 || fallbackId === 'primary';
   const isWeekly = duration === 604_800;
   const isMonthly = duration !== null && duration >= 28 * 86_400 && duration <= 31 * 86_400;
-  const id = isFiveHour ? 'runtime-five-hour' : isMonthly ? 'runtime-monthly' : fallbackId;
+  const id = isFiveHour ? 'five-hour' : isMonthly ? 'monthly' : isWeekly ? 'weekly' : fallbackId;
   const label = isFiveHour ? '5h' : isMonthly ? '30d' : isWeekly ? '7d' : 'Quota';
   const resetAtMs = resetAt ? Date.parse(resetAt) : null;
   const observedAtMs = refreshedAt ? Date.parse(refreshedAt) : undefined;
@@ -64,6 +65,7 @@ const buildWindow = (
     resetAtMs,
     resetAccuracy: resetAt ? 'exact' : 'unknown',
     limitWindowSeconds: duration,
+    modelScope: { kind: 'family', key: CODEX_MAIN_QUOTA_SCOPE_KEY, complete: true },
     observationSource: 'api_query',
     observedAtMs,
   };
@@ -94,8 +96,8 @@ export const buildCodexRuntimeQuotaState = (
   const runtimeQuota = runtimeInfo(file);
   if (!runtimeQuota) return undefined;
   const windows = [
-    buildWindow(runtimeQuota.five_hour ?? runtimeQuota.fiveHour, 'runtime-five-hour'),
-    buildWindow(runtimeQuota.weekly, 'runtime-secondary'),
+    buildWindow(runtimeQuota.five_hour ?? runtimeQuota.fiveHour, 'primary'),
+    buildWindow(runtimeQuota.weekly, 'secondary'),
   ].filter((window): window is CodexQuotaWindow => Boolean(window));
   const credits = runtimeQuota.rate_limit_reset_credits ?? runtimeQuota.rateLimitResetCredits;
   const availableCount = numberValue(credits?.available_count ?? credits?.availableCount);
