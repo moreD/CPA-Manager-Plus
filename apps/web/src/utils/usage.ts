@@ -349,11 +349,12 @@ const isModelFamily = (modelName: string, family: string): boolean => {
   return slug === family || slug.startsWith(`${family}-`);
 };
 
-const isGpt56Model = (modelName: string): boolean => isModelFamily(modelName, 'gpt-5.6');
+const supportsExplicitCachePricing = (modelName: string): boolean =>
+  isModelFamily(modelName, 'gpt-5.6') || isModelFamily(modelName, 'gpt-6-astra');
 
 const supportsLongContextPremium = (modelName: string): boolean => {
   const slug = normalizedModelSlug(modelName);
-  if (isGpt56Model(slug)) return true;
+  if (supportsExplicitCachePricing(slug)) return true;
   if (slug === 'gpt-5.5' || slug.startsWith('gpt-5.5-20')) return true;
   return (
     slug === 'gpt-5.4' ||
@@ -368,14 +369,30 @@ const isConfiguredPriceValue = (value: unknown, configured?: boolean): boolean =
   return configured === true || (Number.isFinite(parsed) && parsed > 0);
 };
 
-const getOfficialGpt56Price = (modelName: string): ModelPrice | undefined => {
+// Official Standard USD rates per 1M tokens, verified 2026-09-05:
+// https://developers.openai.com/api/docs/pricing
+// GPT-5.6 Sol promotional rates are available at least through 2026-11-21.
+const getOfficialGptPrice = (modelName: string): ModelPrice | undefined => {
+  if (isModelFamily(modelName, 'gpt-6-astra')) {
+    return {
+      prompt: 10,
+      completion: 50,
+      cache: 1,
+      cacheRead: 1,
+      cacheCreation: 12.5,
+      promptConfigured: true,
+      completionConfigured: true,
+      cacheReadConfigured: true,
+      cacheCreationConfigured: true,
+    };
+  }
   if (isModelFamily(modelName, 'gpt-5.6-sol')) {
     return {
-      prompt: 5,
-      completion: 30,
-      cache: 0.5,
-      cacheRead: 0.5,
-      cacheCreation: 6.25,
+      prompt: 4,
+      completion: 20,
+      cache: 0.4,
+      cacheRead: 0.4,
+      cacheCreation: 5,
       promptConfigured: true,
       completionConfigured: true,
       cacheReadConfigured: true,
@@ -384,11 +401,11 @@ const getOfficialGpt56Price = (modelName: string): ModelPrice | undefined => {
   }
   if (isModelFamily(modelName, 'gpt-5.6-terra')) {
     return {
-      prompt: 2.5,
-      completion: 15,
-      cache: 0.25,
-      cacheRead: 0.25,
-      cacheCreation: 3.125,
+      prompt: 2,
+      completion: 12,
+      cache: 0.2,
+      cacheRead: 0.2,
+      cacheCreation: 2.5,
       promptConfigured: true,
       completionConfigured: true,
       cacheReadConfigured: true,
@@ -397,11 +414,11 @@ const getOfficialGpt56Price = (modelName: string): ModelPrice | undefined => {
   }
   if (isModelFamily(modelName, 'gpt-5.6-luna')) {
     return {
-      prompt: 1,
-      completion: 6,
-      cache: 0.1,
-      cacheRead: 0.1,
-      cacheCreation: 1.25,
+      prompt: 0.2,
+      completion: 1.2,
+      cache: 0.02,
+      cacheRead: 0.02,
+      cacheCreation: 0.25,
       promptConfigured: true,
       completionConfigured: true,
       cacheReadConfigured: true,
@@ -424,7 +441,7 @@ export function getServiceTierMultiplier(modelName: string, serviceTier?: string
   // OpenAI Priority pricing currently publishes tier multipliers for these
   // model families. Keep this as a compatibility layer until model prices can
   // be represented per tier, such as standard, priority, flex, and batch.
-  if (isModelFamily(normalizedModel, 'gpt-5.6')) return 2;
+  if (supportsExplicitCachePricing(normalizedModel)) return 2;
   if (isModelFamily(normalizedModel, 'gpt-5.5')) return 2.5;
   if (isModelFamily(normalizedModel, 'gpt-5.4-mini')) return 2;
   if (isModelFamily(normalizedModel, 'gpt-5.4')) return 2;
@@ -1166,11 +1183,11 @@ export function calculateCost(
   const analyticsPrice = analyticsModel ? modelPrices[analyticsModel] : undefined;
   const requestedPrice = requestedModel ? modelPrices[requestedModel] : undefined;
   const behaviorModel = resolvedModel || analyticsModel || requestedModel;
-  const behaviorFallback = getOfficialGpt56Price(behaviorModel);
+  const behaviorFallback = getOfficialGptPrice(behaviorModel);
   const officialCandidatePrice =
-    getOfficialGpt56Price(resolvedModel) ||
-    getOfficialGpt56Price(analyticsModel) ||
-    getOfficialGpt56Price(requestedModel);
+    getOfficialGptPrice(resolvedModel) ||
+    getOfficialGptPrice(analyticsModel) ||
+    getOfficialGptPrice(requestedModel);
   const configuredPrice = resolvedPrice || analyticsPrice || requestedPrice;
   const basePrice = configuredPrice
     ? {
@@ -1230,7 +1247,9 @@ export function calculateCost(
     .trim()
     .toLowerCase();
   const longContextOverridesServiceTier =
-    longContext && (normalizedServiceTier === 'priority' || normalizedServiceTier === 'fast');
+    longContext &&
+    !supportsExplicitCachePricing(behaviorModel) &&
+    (normalizedServiceTier === 'priority' || normalizedServiceTier === 'fast');
   const serviceTierPrice =
     !contextTier && !longContextOverridesServiceTier
       ? selectServiceTierPrice(basePrice, serviceTier)
@@ -1245,7 +1264,7 @@ export function calculateCost(
   const configuredCacheReadPrice = Number(price.cacheRead) || 0;
   const cacheReadPrice = isConfiguredPriceValue(configuredCacheReadPrice, price.cacheReadConfigured)
     ? configuredCacheReadPrice
-    : isGpt56Model(behaviorModel)
+    : supportsExplicitCachePricing(behaviorModel)
       ? promptPrice * 0.1
       : Number(price.cache) || 0;
   const configuredCacheCreationPrice = Number(price.cacheCreation) || 0;
@@ -1254,7 +1273,7 @@ export function calculateCost(
     price.cacheCreationConfigured
   )
     ? configuredCacheCreationPrice
-    : promptPrice * (isGpt56Model(behaviorModel) ? 1.25 : 1);
+    : promptPrice * (supportsExplicitCachePricing(behaviorModel) ? 1.25 : 1);
   const readTokens = cachedTokens + cacheReadTokens;
   const promptTokens = Math.max(inputTokens - readTokens - cacheCreationTokens, 0);
   const inputMultiplier = longContext ? 2 : 1;
@@ -1505,19 +1524,20 @@ const COMPACT_NUMBER_UNITS = [
   { threshold: 1_000, suffix: 'K' },
 ];
 
-export function formatCompactNumber(value: number): string {
+export function formatCompactNumber(value: number, fractionDigits = 1): string {
   const num = Number(value);
   if (!Number.isFinite(num)) return '0';
+  const precision = Math.min(6, Math.max(0, Math.floor(fractionDigits)));
 
   const abs = Math.abs(num);
   if (abs === 0) return '0';
   const unit = COMPACT_NUMBER_UNITS.find((item) => abs >= item.threshold);
 
   if (unit) {
-    const formatted = (num / unit.threshold).toFixed(1);
+    const formatted = (num / unit.threshold).toFixed(precision);
     const nextUnit = COMPACT_NUMBER_UNITS[COMPACT_NUMBER_UNITS.indexOf(unit) - 1];
     if (nextUnit && Math.abs(Number(formatted)) >= 1000) {
-      return `${(num / nextUnit.threshold).toFixed(1)}${nextUnit.suffix}`;
+      return `${(num / nextUnit.threshold).toFixed(precision)}${nextUnit.suffix}`;
     }
     return `${formatted}${unit.suffix}`;
   }

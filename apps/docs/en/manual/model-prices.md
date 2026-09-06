@@ -17,6 +17,21 @@ Open the [Model Prices Demo](https://seakee.github.io/CPA-Manager-Plus/#/demo/mo
 
 Synchronization only occurs when the user triggers it and may use the current Manager Server proxy configuration.
 
+### Built-in GPT fallback prices
+
+When no model price is configured, GPT-6 Astra and GPT-5.6 use these built-in Standard rates in USD per million tokens, checked against [official OpenAI pricing](https://developers.openai.com/api/docs/pricing) on 2026-09-05:
+
+| Model | Input | Cache read | Cache write | Output |
+| --- | ---: | ---: | ---: | ---: |
+| GPT-6 Astra | 10 | 1 | 12.5 | 50 |
+| GPT-5.6 Sol | 4 | 0.4 | 5 | 20 |
+| GPT-5.6 Terra | 2 | 0.2 | 2.5 | 12 |
+| GPT-5.6 Luna | 0.2 | 0.02 | 0.25 | 1.2 |
+
+Sol promotional pricing is available at least through 2026-11-21. Without explicit context tiers, requests above 272K input tokens use 2x input/cache rates and 1.5x output rates for the entire request. Fast/Priority costs 2x the applicable short- or long-context Standard rates; Flex/Batch costs half. Saved prices and explicit rules retain precedence. Updating built-in fallbacks does not overwrite manual or synchronized prices; synchronize saved entries again to obtain current prices.
+
+### Sync matching
+
 Automatic matching runs strictly in models.dev, LiteLLM, then OpenRouter order. CPAMP uses the canonical model metadata in the models.dev catalog to prefer the first-party official entry. A source is saved automatically only when it has one clear, strong identity match; fuzzy similarities are never auto-confirmed. An ambiguous source falls through to the next source. If none of the three sources yields a unique match, the confirmation list keeps candidates from each source separately, even when they share the same original model ID.
 
 The current sync maps models.dev `cost.input`, `cost.output`, `cost.cache_read`, and `cost.cache_write`, converts valid `cost.tiers` context tiers into CPAMP billing rules, and maps `experimental.modes.fast.cost` to short-context Fast/Priority prices. The complete model object remains available in raw metadata; reasoning prices, unknown experimental modes, unknown tier types, and rules that cannot be validated safely do not activate automatic billing.
@@ -56,7 +71,7 @@ Models such as GPT-5.6 may vary by context length, service tier, and cache type.
 
 - `experimental.modes.fast.cost` matches both `fast` usage telemetry and API `priority` telemetry.
 - Short-context requests prefer explicit Fast/Priority prices. Missing fields inherit base rates, while explicit zeros remain zero.
-- A matched context tier or the legacy GPT long-context rule uses its standard context price without stacking Fast/Priority pricing.
+- A matched explicit context tier or the legacy GPT-5.4 / GPT-5.5 long-context rule uses its standard context price without stacking Fast/Priority pricing. The built-in GPT-6 Astra and GPT-5.6 long-context fallback still applies the Fast/Priority multiplier.
 - Non-models.dev entries, older data, and models without an explicit mode price retain the existing multiplier as a compatibility fallback.
 
 Model Prices displays synchronized context tiers and service-tier prices as read-only rules. The current manual editor manages base prices only; saving a manual price explicitly clears existing synchronized advanced rules, with a warning shown before saving.

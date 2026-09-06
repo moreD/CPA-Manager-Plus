@@ -41,6 +41,12 @@ describe('formatCompactNumber', () => {
     expect(formatCompactNumber(-2_500_000_000_000_000)).toBe('-2.5P');
     expect(formatCompactNumber(Number.POSITIVE_INFINITY)).toBe('0');
   });
+
+  it('supports two-decimal token badge precision', () => {
+    expect(formatCompactNumber(110_360_000, 2)).toBe('110.36M');
+    expect(formatCompactNumber(2_170_000_000, 2)).toBe('2.17B');
+    expect(formatCompactNumber(1_580_000_000_000, 2)).toBe('1.58T');
+  });
 });
 
 describe('formatCompactUsd', () => {
@@ -1019,7 +1025,80 @@ describe('calculateCost model price preference', () => {
       {}
     );
 
-    expect(cost).toBeCloseTo(1.355);
+    expect(cost).toBeCloseTo(1.004);
+  });
+
+  it.each([
+    ['gpt-6-astra', 2.51, 12.52],
+    ['openai/gpt-6-astra', 2.51, 12.52],
+    ['gpt-5.6-sol', 1.004, 5.008],
+    ['gpt-5.6-terra', 0.542, 2.564],
+    ['gpt-5.6-luna', 0.0542, 0.2564],
+  ])('prices %s across context lengths and service tiers', (modelName, shortCost, longCost) => {
+    const tokens = {
+      input_tokens: 200_000,
+      output_tokens: 20_000,
+      cached_tokens: 20_000,
+      cache_read_tokens: 40_000,
+      cache_creation_tokens: 20_000,
+    };
+    for (const [serviceTier, multiplier] of [
+      ['default', 1],
+      ['priority', 2],
+      ['fast', 2],
+      ['flex', 0.5],
+      ['batch', 0.5],
+    ] as const) {
+      expect(
+        calculateCost({ tokens, __modelName: modelName, service_tier: serviceTier }, {})
+      ).toBeCloseTo(shortCost * multiplier, 6);
+      expect(
+        calculateCost(
+          {
+            tokens: { ...tokens, input_tokens: 600_000 },
+            __modelName: modelName,
+            service_tier: serviceTier,
+          },
+          {}
+        )
+      ).toBeCloseTo(longCost * multiplier, 6);
+    }
+  });
+
+  it('keeps Astra at standard context rates through 272K and honors alias overrides', () => {
+    expect(
+      calculateCost({ tokens: { input_tokens: 272_000 }, __modelName: 'gpt-6-astra' }, {})
+    ).toBeCloseTo(2.72);
+    expect(
+      calculateCost({ tokens: { input_tokens: 272_001 }, __modelName: 'gpt-6-astra' }, {})
+    ).toBeCloseTo(5.44002, 6);
+    expect(
+      calculateCost(
+        {
+          tokens: { input_tokens: 100_000 },
+          __modelName: 'custom-astra',
+          __resolvedModel: 'gpt-6-astra',
+          service_tier: 'fast',
+        },
+        {
+          'custom-astra': { prompt: 3, completion: 4, cache: 0 },
+        }
+      )
+    ).toBeCloseTo(0.6);
+    expect(
+      calculateCost(
+        { tokens: { input_tokens: 100_000 }, __modelName: 'gpt-6-astra' },
+        {
+          'gpt-6-astra': {
+            prompt: 0,
+            completion: 0,
+            cache: 0,
+            promptConfigured: true,
+            completionConfigured: true,
+          },
+        }
+      )
+    ).toBe(0);
   });
 
   it('prefers configured gpt-5.6 base prices over the official fallback', () => {
@@ -1050,7 +1129,7 @@ describe('calculateCost model price preference', () => {
       {}
     );
 
-    expect(cost).toBeCloseTo(12.95);
+    expect(cost).toBeCloseTo(9.76);
   });
 
   it('keeps exactly 272K of gpt-5.6 input at standard rates', () => {
@@ -1062,7 +1141,7 @@ describe('calculateCost model price preference', () => {
       {}
     );
 
-    expect(cost).toBeCloseTo(0.872);
+    expect(cost).toBeCloseTo(0.1744);
   });
 
   it('uses resolved gpt-5.6 behavior with a configured alias price', () => {

@@ -386,8 +386,8 @@ func TestCostForGPT56UsesOfficialFallbackPrice(t *testing.T) {
 		CacheCreationTokens: 100_000,
 	}, nil)
 
-	if math.Abs(cost-6.775) > 0.000001 {
-		t.Fatalf("fallback cost = %v, want 6.775", cost)
+	if math.Abs(cost-5.02) > 0.000001 {
+		t.Fatalf("fallback cost = %v, want 5.02", cost)
 	}
 }
 
@@ -415,8 +415,8 @@ func TestCostForGPT56AppliesLongContextMultipliers(t *testing.T) {
 	}
 
 	cost := CostForModel("gpt-5.6-sol", tokens, nil)
-	if math.Abs(cost-12.95) > 0.000001 {
-		t.Fatalf("long-context cost = %v, want 12.95", cost)
+	if math.Abs(cost-9.76) > 0.000001 {
+		t.Fatalf("long-context cost = %v, want 9.76", cost)
 	}
 }
 
@@ -426,8 +426,8 @@ func TestCostForGPT56KeepsExactly272KAtStandardRates(t *testing.T) {
 		OutputTokens: 100_000,
 	}, nil)
 
-	if math.Abs(cost-0.872) > 0.000001 {
-		t.Fatalf("272K cost = %v, want 0.872", cost)
+	if math.Abs(cost-0.1744) > 0.000001 {
+		t.Fatalf("272K cost = %v, want 0.1744", cost)
 	}
 }
 
@@ -588,12 +588,50 @@ func TestLongContextPremiumCoversGPT54AndGPT55(t *testing.T) {
 	}
 }
 
-func TestLongContextDoesNotStackPriorityMultiplier(t *testing.T) {
+func TestGPT56LongContextAppliesPriorityMultiplier(t *testing.T) {
 	tokens := ModelTokens{InputTokens: 300_000, OutputTokens: 100_000, LongInputTokens: 300_000, LongOutputTokens: 100_000}
 	standard := CostForModelWithServiceTier("gpt-5.6-luna", "default", tokens, nil)
 	priority := CostForModelWithServiceTier("gpt-5.6-luna", "priority", tokens, nil)
-	if math.Abs(priority-standard) > 0.000001 {
-		t.Fatalf("priority long cost = %v, want standard long cost %v", priority, standard)
+	if math.Abs(priority-standard*2) > 0.000001 {
+		t.Fatalf("priority long cost = %v, want twice standard long cost %v", priority, standard)
+	}
+}
+
+func TestOfficialGPTPricingAcrossServiceTiers(t *testing.T) {
+	models := []struct {
+		name      string
+		shortCost float64
+		longCost  float64
+	}{
+		{"gpt-6-astra", 2.51, 12.52},
+		{"openai/gpt-6-astra", 2.51, 12.52},
+		{"gpt-5.6-sol", 1.004, 5.008},
+		{"gpt-5.6-terra", 0.542, 2.564},
+		{"gpt-5.6-luna", 0.0542, 0.2564},
+	}
+	for _, tt := range models {
+		for _, tier := range []struct {
+			name       string
+			multiplier float64
+		}{
+			{"default", 1}, {"priority", 2}, {"fast", 2}, {"flex", 0.5}, {"batch", 0.5},
+		} {
+			t.Run(tt.name+"/"+tier.name, func(t *testing.T) {
+				tokens := ModelTokens{InputTokens: 200_000, OutputTokens: 20_000, CachedTokens: 20_000, CacheReadTokens: 40_000, CacheCreationTokens: 20_000}
+				if got := CostForModelWithServiceTier(tt.name, tier.name, tokens, nil); math.Abs(got-tt.shortCost*tier.multiplier) > 0.000001 {
+					t.Fatalf("short cost = %v, want %v", got, tt.shortCost*tier.multiplier)
+				}
+				tokens.InputTokens = 600_000
+				tokens.LongInputTokens = tokens.InputTokens
+				tokens.LongOutputTokens = tokens.OutputTokens
+				tokens.LongCachedTokens = tokens.CachedTokens
+				tokens.LongCacheReadTokens = tokens.CacheReadTokens
+				tokens.LongCacheCreationTokens = tokens.CacheCreationTokens
+				if got := CostForModelWithServiceTier(tt.name, tier.name, tokens, nil); math.Abs(got-tt.longCost*tier.multiplier) > 0.000001 {
+					t.Fatalf("long cost = %v, want %v", got, tt.longCost*tier.multiplier)
+				}
+			})
+		}
 	}
 }
 
@@ -602,6 +640,23 @@ func TestFlexUsesHalfPrice(t *testing.T) {
 	got := CostForModelWithServiceTier("gpt-5.5", "flex", ModelTokens{InputTokens: 1_000_000}, prices)
 	if math.Abs(got-2.5) > 0.000001 {
 		t.Fatalf("flex cost = %v, want 2.5", got)
+	}
+}
+
+func TestAstraPricingPreservesOverridesAndMixedContextAggregates(t *testing.T) {
+	prices := map[string]model.ModelPrice{"custom-astra": {Prompt: 3, Completion: 4}}
+	got := CostForModelCandidatesWithServiceTier([]string{"gpt-6-astra", "custom-astra"}, "fast", ModelTokens{InputTokens: 100_000}, prices)
+	if math.Abs(got-0.6) > 0.000001 {
+		t.Fatalf("alias override cost = %v, want 0.6", got)
+	}
+	prices = map[string]model.ModelPrice{"gpt-6-astra": {PromptConfigured: true, CompletionConfigured: true}}
+	if got := CostForModel("gpt-6-astra", ModelTokens{InputTokens: 100_000}, prices); got != 0 {
+		t.Fatalf("explicit zero cost = %v, want 0", got)
+	}
+	// One short 100K request and one long 300K request, both using Fast.
+	got = CostForModelWithServiceTier("gpt-6-astra", "fast", ModelTokens{InputTokens: 400_000, LongInputTokens: 300_000}, nil)
+	if math.Abs(got-14) > 0.000001 {
+		t.Fatalf("mixed context cost = %v, want 14", got)
 	}
 }
 

@@ -48,8 +48,8 @@ func costForPrice(modelName string, tokens ModelTokens, price model.ModelPrice) 
 }
 
 func costForPriceWithLegacyLongContext(modelName string, tokens ModelTokens, price model.ModelPrice, allowLegacyLongContext bool) float64 {
-	if isGPT56Model(modelName) {
-		price = enrichGPT56BasePrice(modelName, price)
+	if supportsExplicitCachePricing(modelName) {
+		price = enrichOfficialBasePrice(modelName, price)
 	}
 	if effectivePrice, ok := activeContextPrice(tokens, price); ok {
 		return costForSegment(
@@ -157,7 +157,7 @@ func ServiceTierMultiplier(modelName string, serviceTier string) float64 {
 
 	modelName = strings.ToLower(strings.TrimSpace(modelName))
 	switch {
-	case isModelFamily(modelName, "gpt-5.6"):
+	case supportsExplicitCachePricing(modelName):
 		return 2
 	case isModelFamily(modelName, "gpt-5.5"):
 		return 2.5
@@ -214,7 +214,7 @@ func CostForModelCandidatesWithServiceTier(modelNames []string, serviceTier stri
 		return costForPriceWithServiceTier(behaviorModel, serviceTier, tokens, price)
 	}
 	for _, modelName := range candidates {
-		price, ok := officialGPT56Price(modelName)
+		price, ok := officialGPTPrice(modelName)
 		if !ok {
 			continue
 		}
@@ -257,13 +257,13 @@ func isModelFamily(modelName string, family string) bool {
 	return modelName == family || strings.HasPrefix(modelName, family+"-")
 }
 
-func isGPT56Model(modelName string) bool {
-	return isModelFamily(modelName, "gpt-5.6")
+func supportsExplicitCachePricing(modelName string) bool {
+	return isModelFamily(modelName, "gpt-5.6") || isModelFamily(modelName, "gpt-6-astra")
 }
 
 func supportsLongContextPremium(modelName string) bool {
 	slug := normalizedModelSlug(modelName)
-	if isGPT56Model(slug) {
+	if supportsExplicitCachePricing(slug) {
 		return true
 	}
 	if slug == "gpt-5.5" || strings.HasPrefix(slug, "gpt-5.5-20") {
@@ -280,7 +280,7 @@ func costForPriceWithServiceTier(modelName, serviceTier string, tokens ModelToke
 	legacyLongContext := len(price.ContextTiers) == 0 && supportsLongContextPremium(modelName) && tokens.LongInputTokens > 0
 	if legacyLongContext {
 		tier := strings.ToLower(strings.TrimSpace(serviceTier))
-		if tier != "priority" && tier != "fast" {
+		if supportsExplicitCachePricing(modelName) || (tier != "priority" && tier != "fast") {
 			if effectivePrice, ok := model.ModelPriceForServiceTier(price, serviceTier); ok {
 				return costForPriceWithLegacyLongContext(modelName, tokens, effectivePrice, true)
 			}
@@ -345,11 +345,11 @@ func resolveModelPrice(modelName string, prices map[string]model.ModelPrice) (mo
 	if price, ok := prices[modelName]; ok {
 		return price, true
 	}
-	return officialGPT56Price(modelName)
+	return officialGPTPrice(modelName)
 }
 
-func enrichGPT56BasePrice(modelName string, price model.ModelPrice) model.ModelPrice {
-	fallback, ok := officialGPT56Price(modelName)
+func enrichOfficialBasePrice(modelName string, price model.ModelPrice) model.ModelPrice {
+	fallback, ok := officialGPTPrice(modelName)
 	if !ok {
 		return price
 	}
@@ -368,22 +368,30 @@ func enrichGPT56BasePrice(modelName string, price model.ModelPrice) model.ModelP
 	return price
 }
 
-func officialGPT56Price(modelName string) (model.ModelPrice, bool) {
+// Official Standard USD rates per 1M tokens, verified 2026-09-05:
+// https://developers.openai.com/api/docs/pricing
+// GPT-5.6 Sol promotional rates are available at least through 2026-11-21.
+func officialGPTPrice(modelName string) (model.ModelPrice, bool) {
 	slug := normalizedModelSlug(modelName)
 	switch {
+	case isModelFamily(slug, "gpt-6-astra"):
+		return model.ModelPrice{
+			Prompt: 10, Completion: 50, Cache: 1, CacheRead: 1, CacheCreation: 12.5,
+			PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true, CacheCreationConfigured: true,
+		}, true
 	case isModelFamily(slug, "gpt-5.6-sol"):
 		return model.ModelPrice{
-			Prompt: 5, Completion: 30, Cache: 0.5, CacheRead: 0.5, CacheCreation: 6.25,
+			Prompt: 4, Completion: 20, Cache: 0.4, CacheRead: 0.4, CacheCreation: 5,
 			PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true, CacheCreationConfigured: true,
 		}, true
 	case isModelFamily(slug, "gpt-5.6-terra"):
 		return model.ModelPrice{
-			Prompt: 2.5, Completion: 15, Cache: 0.25, CacheRead: 0.25, CacheCreation: 3.125,
+			Prompt: 2, Completion: 12, Cache: 0.2, CacheRead: 0.2, CacheCreation: 2.5,
 			PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true, CacheCreationConfigured: true,
 		}, true
 	case isModelFamily(slug, "gpt-5.6-luna"):
 		return model.ModelPrice{
-			Prompt: 1, Completion: 6, Cache: 0.1, CacheRead: 0.1, CacheCreation: 1.25,
+			Prompt: 0.2, Completion: 1.2, Cache: 0.02, CacheRead: 0.02, CacheCreation: 0.25,
 			PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true, CacheCreationConfigured: true,
 		}, true
 	default:

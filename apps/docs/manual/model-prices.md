@@ -17,6 +17,21 @@ description: 配置 CPA Manager Plus 模型价格、service tier、长上下文�
 
 同步只在用户主动触发时发生，可能使用当前 Manager Server 代理设置。
 
+### GPT 内置回退价格
+
+未配置模型价格时，GPT-6 Astra 和 GPT-5.6 使用以下内置标准价格（美元 / 百万 Token，2026-09-05 核对 [OpenAI 官方定价](https://developers.openai.com/api/docs/pricing)）：
+
+| 模型 | 输入 | 缓存读取 | 缓存写入 | 输出 |
+| --- | ---: | ---: | ---: | ---: |
+| GPT-6 Astra | 10 | 1 | 12.5 | 50 |
+| GPT-5.6 Sol | 4 | 0.4 | 5 | 20 |
+| GPT-5.6 Terra | 2 | 0.2 | 2.5 | 12 |
+| GPT-5.6 Luna | 0.2 | 0.02 | 0.25 | 1.2 |
+
+Sol 的促销价至少持续至 2026-11-21。以上模型在没有显式上下文阶梯时，输入超过 272K 后整次请求的输入和缓存价格乘以 2，输出价格乘以 1.5；Fast/Priority 在短、长上下文均乘以 2，Flex/Batch 均为对应标准价格的一半。已保存的价格和显式规则仍优先，内置回退更新不会覆盖手动或同步价格；已同步条目需要重新同步以取得最新价格。
+
+### 同步匹配
+
 自动匹配会严格按 models.dev、LiteLLM、OpenRouter 的顺序进行。CPAMP 使用 models.dev catalog 的规范模型元数据优先识别第一方官方条目；每个来源都只有唯一、明确的模型身份匹配才会自动保存，模糊相似项不会自动确认。某个来源存在歧义时会继续尝试下一来源；三个来源都无法唯一确认时，待确认列表会分别保留各来源的候选，即使它们的原始模型 ID 相同也不会互相覆盖。
 
 当前同步会映射 models.dev 的 `cost.input`、`cost.output`、`cost.cache_read` 和 `cost.cache_write`，将有效的 `cost.tiers` 上下文阶梯转换为 CPAMP 计费规则，并将 `experimental.modes.fast.cost` 映射为 Fast/Priority 短上下文价格。完整模型对象仍保存在原始元数据中；reasoning、未知实验模式、未知阶梯类型或无法安全验证的规则不会激活自动计费。
@@ -56,7 +71,7 @@ description: 配置 CPA Manager Plus 模型价格、service tier、长上下文�
 
 - `experimental.modes.fast.cost` 同时匹配使用数据中的 `fast` 和 API `priority`。
 - 短上下文优先使用显式 Fast/Priority 价格；缺失字段继承基础价格，显式零值保持为零。
-- 命中上下文阶梯或旧版 GPT 长上下文规则时，使用对应的标准上下文价格，不再叠加 Fast/Priority。
+- 命中显式上下文阶梯或 GPT-5.4 / GPT-5.5 旧版长上下文规则时，使用对应的标准上下文价格，不再叠加 Fast/Priority。GPT-6 Astra 和 GPT-5.6 的内置长上下文回退仍应用 Fast/Priority 倍率。
 - 非 models.dev、旧数据或没有显式模式价格的模型继续使用现有倍率作为兼容回退。
 
 模型价格页只读展示已同步的上下文阶梯和服务层级价格。当前手动编辑器只维护基础价格；保存手动价格会明确清除该模型已有的同步高级规则，界面会在保存前提示。

@@ -1135,7 +1135,8 @@ func TestAnalyticsPricesGPT56LongContextPerRequest(t *testing.T) {
 		t.Fatalf("analytics: %v", err)
 	}
 
-	const want = 4.08001
+	// Sol: 272K at $4/M plus 272001 tokens at the $8/M long-context rate.
+	const want = 3.264008
 	assertCost := func(name string, got float64) {
 		t.Helper()
 		if math.Abs(got-want) > 0.000001 {
