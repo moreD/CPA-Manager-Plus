@@ -8,6 +8,7 @@ import {
 import { DEMO_API_BASE, isDemoMode } from '@/features/demo/demoMode';
 import { useAuthStore } from '@/stores';
 import { useUsageServiceStore } from '@/stores/useUsageServiceStore';
+import type { AuthSessionMode } from '@/types';
 import { detectApiBaseFromLocation } from '@/utils/connection';
 
 export type PanelHostMode = 'manager_embedded' | 'external_panel';
@@ -147,6 +148,7 @@ type PanelFeatureAvailabilityRequestInput = {
   managementKey: string;
   usageServiceRevision: number;
   panelBase: string;
+  sessionMode: AuthSessionMode | '';
 };
 
 type PanelFeatureAvailabilityRequest = {
@@ -194,12 +196,14 @@ const buildAvailabilityRequestKey = ({
   managementKey,
   usageServiceRevision,
   panelBase,
+  sessionMode,
 }: PanelFeatureAvailabilityRequestInput): string =>
   [
     normalizeBase(panelBase),
     normalizeBase(apiBase),
     managementKey,
     String(usageServiceRevision),
+    sessionMode,
   ].join('\u001f');
 
 const isConfirmedExternalPanelProbeFailure = (error: unknown): boolean =>
@@ -209,8 +213,21 @@ async function detectPanelFeatureAvailability({
   apiBase,
   managementKey,
   panelBase,
+  sessionMode,
 }: PanelFeatureAvailabilityRequestInput): Promise<PanelFeatureAvailability> {
   const normalizedPanelBase = normalizeBase(panelBase);
+  if (sessionMode === 'external_panel') {
+    return resolvePanelFeatureAvailability({
+      checking: false,
+      panelHostConfirmed: true,
+      panelHostedByUsageService: false,
+      panelBase: normalizedPanelBase,
+      managerServiceBase: '',
+      managerConfig: null,
+      hasManagerCandidate: false,
+      managementKey,
+    });
+  }
   if (!managementKey) {
     return resolvePanelFeatureAvailability({
       checking: false,
@@ -316,6 +333,7 @@ export function usePanelFeatureAvailability(): PanelFeatureAvailability {
   const demoMode = __DEMO_SITE__ && isDemoMode();
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
+  const sessionMode = useAuthStore((state) => state.sessionMode);
   const usageServiceRevision = useUsageServiceStore((state) => state.revision);
   const panelBase = useMemo(() => detectApiBaseFromLocation(), []);
   const requestInput = useMemo(
@@ -324,8 +342,9 @@ export function usePanelFeatureAvailability(): PanelFeatureAvailability {
       managementKey,
       usageServiceRevision,
       panelBase,
+      sessionMode,
     }),
-    [apiBase, managementKey, panelBase, usageServiceRevision]
+    [apiBase, managementKey, panelBase, sessionMode, usageServiceRevision]
   );
   const requestKey = useMemo(() => buildAvailabilityRequestKey(requestInput), [requestInput]);
   const [state, setState] = useState<{

@@ -20,6 +20,7 @@ import { AiProvidersOpenAIModelsPage } from '@/pages/AiProvidersOpenAIModelsPage
 import { AiProvidersVertexEditPage } from '@/pages/AiProvidersVertexEditPage';
 import { OAuthPage } from '@/pages/OAuthPage';
 import { UsageAnalyticsPage } from '@/pages/UsageAnalyticsPage';
+import { ClientUsagePage } from '@/pages/ClientUsagePage';
 import { MonitoringCenterPage } from '@/pages/MonitoringCenterPage';
 import { AccountActionCandidatesPage } from '@/pages/AccountActionCandidatesPage';
 import { ModelPricesPage } from '@/pages/ModelPricesPage';
@@ -155,6 +156,7 @@ const mainRoutes: RouteObject[] = [
       </FeatureGate>
     ),
   },
+  { path: '/client-usage', element: <ClientUsagePage /> },
   {
     path: '/codex-inspection',
     element: <LegacyAccountsRedirect healthMode="local" />,

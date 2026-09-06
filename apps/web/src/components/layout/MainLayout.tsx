@@ -65,6 +65,7 @@ const sidebarIcons: Record<string, ReactNode> = {
   authFiles: <IconSidebarAuthFiles size={SIDEBAR_ICON_SIZE} />,
   oauth: <IconSidebarOauth size={SIDEBAR_ICON_SIZE} />,
   usageAnalytics: <IconSidebarUsage size={SIDEBAR_ICON_SIZE} />,
+  clientUsage: <IconSidebarUsage size={SIDEBAR_ICON_SIZE} />,
   monitoring: <IconSidebarMonitor size={SIDEBAR_ICON_SIZE} />,
   plugins: <IconSidebarPlugins size={SIDEBAR_ICON_SIZE} />,
   config: <IconSidebarConfig size={SIDEBAR_ICON_SIZE} />,
@@ -524,6 +525,12 @@ function MainLayoutContent({ routeBase = '', demoMode = false }: MainLayoutProps
         icon: sidebarIcons.usageAnalytics,
       }
     : null;
+  const clientUsageNavItem: NavItem = {
+    path: '/client-usage',
+    label: t('nav.client_usage'),
+    shortLabel: navShortLabel('nav.client_usage', t('nav.client_usage')),
+    icon: sidebarIcons.clientUsage,
+  };
   const monitoringNavItem = featureAvailability.requestMonitoringAvailable
     ? {
         path: '/monitoring',
@@ -561,6 +568,7 @@ function MainLayoutContent({ routeBase = '', demoMode = false }: MainLayoutProps
   const navSections: NavItem[][] = [
     [
       dashboardNavItem,
+      clientUsageNavItem,
       ...(usageAnalyticsNavItem ? [usageAnalyticsNavItem] : []),
       ...(monitoringNavItem ? [monitoringNavItem] : []),
     ],
