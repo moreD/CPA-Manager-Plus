@@ -30,7 +30,18 @@ For all agents. Shared approval semantics: `/Users/seakee/.codex/prompt-policy.m
   superseded plans. Follow `docs/plan/README.md`.
 - `AGENTS.md` / `CLAUDE.md` are collaboration files; commit them only on explicit request.
 
-## Layout
+## This Host's Deployment
+
+- Confirmed by the user on 2026-09-05: this host uses the CPA lightweight panel only. There is no local or remote Manager Server and no server-side model-price database to synchronize.
+- CPA runs as the user systemd service `cliproxyapi.service`, from `/home/ubuntu/cliproxyapi`, on port `8088`. The live panel is `/home/ubuntu/cliproxyapi/static/management.html`, served at `/management.html`.
+- Deploy by running `npm run build`, backing up the live HTML under `/home/ubuntu/cliproxyapi/backups/`, and atomically installing the built `apps/web/dist/index.html` at the live path. Static panel updates do not require restarting CPA.
+- After a deployment passes verification, retain only the three newest deployment backup sets under `/home/ubuntu/cliproxyapi/backups/`. Keep the immediate previous `.good` copies; standalone source and configuration archives are not deployment backup sets.
+- `remote-management.disable-auto-update-panel` is already enabled in the live CPA config to preserve this custom build.
+- Lightweight mode uses built-in fallback prices and any overrides stored in the user's browser. The price-sync API requires Manager Server; do not assume one exists or deploy one unless the user requests it.
+- Client Usage quotas and billed USD come directly from CPA's server-side `cost_usd` and `cost-limits`; browser price overrides do not affect quota enforcement.
+- The unused `/home/ubuntu/repos/Cli-Proxy-API-Management-Center` checkout was removed at the user's request on 2026-09-05. Its source and Git history are archived at `/home/ubuntu/cliproxyapi/backups/legacy-management-center-20260905T012130Z.tar.gz` (dependencies excluded). Use CPA-Manager-Plus for future panel updates.
+
+## Repository Layout
 
 | Path | Purpose |
 |---|---|
