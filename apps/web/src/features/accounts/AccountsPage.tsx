@@ -14,6 +14,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/DropdownMen
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { AccountCostUsageBar } from './components/AccountCostUsageBar';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { SegmentedTabs, type SegmentedTabItem } from '@/components/ui/SegmentedTabs';
@@ -1074,6 +1075,7 @@ export function AccountsPage() {
   const [historyRefreshing, setHistoryRefreshing] = useState(false);
   const [accountHistoryRefreshRevision, setAccountHistoryRefreshRevision] = useState(0);
   const [accountHistoryAutoRefreshRevision, setAccountHistoryAutoRefreshRevision] = useState(0);
+  const [accountCostRefreshRevision, setAccountCostRefreshRevision] = useState(0);
   const [accountQuotaRefreshRevision, setAccountQuotaRefreshRevision] = useState(0);
   const [suppressedInspectionResultKeys, setSuppressedInspectionResultKeys] = useState<Set<string>>(
     () => readCompletedAccountReauthResultKeys(connectionFingerprint)
@@ -5607,6 +5609,7 @@ export function AccountsPage() {
           );
           if (!isCurrentBatch()) return;
           const successCount = results.filter(Boolean).length;
+          setAccountCostRefreshRevision((current) => current + 1);
           showNotification(
             t('accounts.quota_refresh_result', {
               success: successCount,
@@ -7214,6 +7217,12 @@ export function AccountsPage() {
                           {quotaEmptyLabel}
                         </span>
                       )}
+                      <AccountCostUsageBar
+                        authIndex={normalizeAuthIndex(row.authIndex) ?? ''}
+                        refreshRevision={
+                          accountHistoryAutoRefreshRevision + accountCostRefreshRevision
+                        }
+                      />
                     </span>
                   ),
                 })}

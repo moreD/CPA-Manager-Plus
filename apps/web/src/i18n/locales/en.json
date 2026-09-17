@@ -1,4 +1,23 @@
 {
+  "auth_cost": {
+    "title": "CPA credential budget",
+    "description": "Estimated token cost at CPA server prices, tracked from enablement. The 7-day budget resets with this credential’s upstream weekly quota.",
+    "week_used": "Used this period",
+    "remaining": "Remaining budget",
+    "total_used": "Total since tracking began",
+    "next_reset": "Next reset: {{time}}",
+    "reset_unknown": "Upstream weekly reset not available yet; the budget will not reset until this is known",
+    "unlimited": "Unlimited",
+    "limit": "7-day limit (USD)",
+    "limit_hint": "0 means unlimited. Reaching the limit stops new requests until the upstream weekly reset.",
+    "invalid_limit": "Enter a finite amount greater than or equal to 0.",
+    "exceeded": "Budget reached. This credential is paused until the next upstream weekly reset.",
+    "unavailable": "Budget accounting is unavailable. This credential remains blocked until accounting recovers.",
+    "unsupported": "This CPA server does not provide credential budgets, or this credential is no longer available.",
+    "load_error": "Could not load the credential budget. Refresh to retry.",
+    "save_error": "Could not save the limit. Your changes have not been confirmed.",
+    "saved": "Limit saved."
+  },
   "common": {
     "login": "Login",
     "logout": "Logout",

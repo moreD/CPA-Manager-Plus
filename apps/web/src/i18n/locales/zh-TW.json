@@ -1,4 +1,23 @@
 {
+  "auth_cost": {
+    "title": "CPA 憑證美元額度",
+    "description": "按 CPA 伺服器模型價格估算 token 費用，從啟用統計時開始累計。7 天額度跟隨此憑證上游的每週配額重設。",
+    "week_used": "本週期已使用",
+    "remaining": "剩餘額度",
+    "total_used": "開始統計以來累計",
+    "next_reset": "下次更新：{{time}}",
+    "reset_unknown": "尚未取得上游每週重設時間，確認前額度不會自動更新",
+    "unlimited": "不限額",
+    "limit": "7 天額度上限（美元）",
+    "limit_hint": "0 表示不限額。達到上限後停止接收新請求，等待上游每週配額更新。",
+    "invalid_limit": "請輸入大於或等於 0 的有限金額。",
+    "exceeded": "已達到額度上限，此憑證暫停使用，等待上游每週配額更新。",
+    "unavailable": "額度統計暫時無法使用。此憑證會保持停用，直到統計恢復。",
+    "unsupported": "目前 CPA 服務不支援憑證美元額度，或該憑證已不存在。",
+    "load_error": "無法載入憑證額度，請重新整理重試。",
+    "save_error": "額度上限儲存失敗，尚未確認修改生效。",
+    "saved": "額度上限已儲存。"
+  },
   "common": {
     "login": "登入",
     "logout": "登出",

@@ -20,6 +20,7 @@ import {
 } from '@/features/accounts/model/accountQuotaDisplayWindows';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import { QuotaWindowCard } from '../QuotaWindowCard';
+import { AccountCostUsage } from './AccountCostUsage';
 import styles from '@/features/accounts/AccountsPage.module.scss';
 
 type MetricTone = 'blue' | 'green' | 'teal' | 'amber';
@@ -162,6 +163,8 @@ export function AccountQuotaTab({
           </Button>
         </div>
       </div>
+
+      <AccountCostUsage authIndex={detailView.identity.authIndex} />
 
       <section className={styles.quotaSummaryPanel} data-account-quota-usage-summary="true">
         <div className={styles.quotaSummaryHeading}>
