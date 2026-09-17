@@ -177,7 +177,7 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
 
   function generateSecureApiKey(): string {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const array = new Uint8Array(64);
+    const array = new Uint8Array(17);
     crypto.getRandomValues(array);
     return 'sk-' + Array.from(array, (b) => charset[b % charset.length]).join('');
   }

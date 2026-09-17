@@ -874,7 +874,7 @@ describe('ApiKeysCardEditor immediate CPA persistence', () => {
     await clickButton(editor.renderer, 'config_management.visual.api_keys.add');
     await clickButton(editor.renderer, 'config_management.visual.api_keys.generate');
 
-    expect(input(editor.renderer, API_KEY_PLACEHOLDER).props.value).toMatch(/^sk-[A-Za-z0-9]+$/);
+    expect(input(editor.renderer, API_KEY_PLACEHOLDER).props.value).toMatch(/^sk-[A-Za-z0-9]{17}$/);
     expect(onPersistApiKeyMutation).not.toHaveBeenCalled();
   });
 
