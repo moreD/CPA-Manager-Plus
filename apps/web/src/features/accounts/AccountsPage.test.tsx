@@ -12372,7 +12372,7 @@ describe('AccountsPage replacement flows', () => {
     expect(treeText(renderer)).not.toContain('req-first');
   });
 
-  it('consumes a scoped OAuth mutation marker and suppresses stale credential status', async () => {
+  it('consumes a scoped OAuth mutation marker from loaded credentials without another request', async () => {
     const file = {
       ...makeCodexFile('codex.json', 'auth-1', 'codex@example.com'),
       status: 'error',
@@ -12389,9 +12389,9 @@ describe('AccountsPage replacement flows', () => {
     const renderer = await renderAccountsPage();
     await flushPromises();
 
-    expect(mocks.loadFiles).toHaveBeenCalledTimes(2);
-    expect(mocks.getActiveQuotaCooldowns).toHaveBeenCalledTimes(1);
-    expect(mocks.listAccountActionCandidates).toHaveBeenCalledTimes(1);
+    expect(mocks.loadFiles).toHaveBeenCalledTimes(1);
+    expect(mocks.getActiveQuotaCooldowns).not.toHaveBeenCalled();
+    expect(mocks.listAccountActionCandidates).not.toHaveBeenCalled();
     expect(listAccountCredentialMutationMarkers('http://cpa-a.local:8317:manager-key')).toEqual([]);
     expect(getAccountCardText(renderer, getAuthFileSelectionKey(file))).not.toContain(
       'accounts.health_reauth'
@@ -12400,6 +12400,8 @@ describe('AccountsPage replacement flows', () => {
   it.each(['files', 'cooldowns', 'actions'] as const)(
     'keeps an OAuth mutation marker after a failed %s reload and consumes it on the next Accounts refresh',
     async (failedArtifact) => {
+      const renderer = await renderAccountsPage();
+      await flushPromises();
       const marker = recordAccountCredentialMutationMarker({
         connectionFingerprint: 'http://cpa-a.local:8317:manager-key',
         provider: 'codex',
@@ -12407,7 +12409,6 @@ describe('AccountsPage replacement flows', () => {
       });
       if (failedArtifact === 'files') {
         mocks.loadFiles
-          .mockImplementationOnce(async () => mocks.files)
           .mockRejectedValueOnce(new Error('temporary auth-file list failure'))
           .mockImplementation(async () => mocks.files);
       } else if (failedArtifact === 'cooldowns') {
@@ -12420,7 +12421,9 @@ describe('AccountsPage replacement flows', () => {
         );
       }
 
-      const renderer = await renderAccountsPage();
+      await act(async () => {
+        await findButtonByText(renderer, 'common.refresh').props.onClick();
+      });
       await flushPromises();
 
       expect(listAccountCredentialMutationMarkers('http://cpa-a.local:8317:manager-key')).toEqual([
@@ -12435,12 +12438,14 @@ describe('AccountsPage replacement flows', () => {
       expect(listAccountCredentialMutationMarkers('http://cpa-a.local:8317:manager-key')).toEqual(
         []
       );
-      expect(mocks.loadFiles).toHaveBeenCalledTimes(failedArtifact === 'files' ? 3 : 2);
+      expect(mocks.loadFiles).toHaveBeenCalledTimes(failedArtifact === 'files' ? 4 : 3);
       expect(mocks.getActiveQuotaCooldowns).toHaveBeenCalledTimes(2);
       expect(mocks.listAccountActionCandidates).toHaveBeenCalledTimes(2);
     }
   );
   it('does not acknowledge an old-connection OAuth marker when its reload finishes after a connection change', async () => {
+    const renderer = await renderAccountsPage();
+    await flushPromises();
     const marker = recordAccountCredentialMutationMarker({
       connectionFingerprint: 'http://cpa-a.local:8317:manager-key',
       provider: 'codex',
@@ -12448,11 +12453,13 @@ describe('AccountsPage replacement flows', () => {
     });
     const delayedCredentialReload = createDeferred<AuthFileItem[]>();
     mocks.loadFiles
-      .mockImplementationOnce(async () => mocks.files)
       .mockImplementationOnce(() => delayedCredentialReload.promise)
       .mockImplementation(async () => mocks.files);
 
-    const renderer = await renderAccountsPage();
+    let refreshPromise!: Promise<void>;
+    await act(async () => {
+      refreshPromise = findButtonByText(renderer, 'common.refresh').props.onClick();
+    });
     await flushPromises();
     expect(mocks.loadFiles).toHaveBeenCalledTimes(2);
 
@@ -12466,7 +12473,7 @@ describe('AccountsPage replacement flows', () => {
 
     await act(async () => {
       delayedCredentialReload.resolve(mocks.files);
-      await delayedCredentialReload.promise;
+      await refreshPromise;
     });
     await flushPromises();
 
@@ -12657,6 +12664,10 @@ describe('AccountsPage replacement flows', () => {
 
     const renderer = await renderAccountsPage();
     await flushPromises();
+    expect(mocks.loadFiles).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await findButtonByText(renderer, 'common.refresh').props.onClick();
+    });
     await act(async () => {
       renderer.update(<AccountsPage />);
       await Promise.resolve();
@@ -12723,6 +12734,9 @@ describe('AccountsPage replacement flows', () => {
 
     const renderer = await renderAccountsPage();
     await flushPromises();
+    await act(async () => {
+      await findButtonByText(renderer, 'common.refresh').props.onClick();
+    });
     await act(async () => {
       renderer.update(<AccountsPage />);
       await Promise.resolve();
@@ -12797,6 +12811,9 @@ describe('AccountsPage replacement flows', () => {
 
     const renderer = await renderAccountsPage();
     await flushPromises();
+    await act(async () => {
+      await findButtonByText(renderer, 'common.refresh').props.onClick();
+    });
     await act(async () => {
       renderer.update(<AccountsPage />);
       await Promise.resolve();
@@ -12919,6 +12936,9 @@ describe('AccountsPage replacement flows', () => {
     const renderer = await renderAccountsPage();
     await flushPromises();
     await act(async () => {
+      await findButtonByText(renderer, 'common.refresh').props.onClick();
+    });
+    await act(async () => {
       renderer.update(<AccountsPage />);
       await Promise.resolve();
     });
@@ -12937,7 +12957,7 @@ describe('AccountsPage replacement flows', () => {
       kind: 'oauth',
     });
   });
-  it('preserves confirmed OAuth quota when a newer marker remains unconfirmed after retry exhaustion', async () => {
+  it('preserves confirmed OAuth quota without polling for an unconfirmed marker after remount', async () => {
     vi.useFakeTimers();
     const now = Date.now();
     const firstMarkerAtMs = now - 30_000;
@@ -12961,7 +12981,7 @@ describe('AccountsPage replacement flows', () => {
       fetchedAtMs: bQuotaAtMs,
       ...buildQuotaCredentialIdentity(firstOauthFile),
     };
-    mocks.files = [existingFile];
+    mocks.files = [existingFile, firstOauthFile];
     installCodexQuotaStoreMutationMock();
     mocks.quotaState.codexQuota = {
       [existingStoreKey]: existingQuota,
@@ -12984,19 +13004,26 @@ describe('AccountsPage replacement flows', () => {
       requireObservedMutation: true,
       createdAtMs: secondMarkerAtMs,
     });
-    mocks.loadFiles.mockImplementation(async () => {
-      if (mocks.loadFiles.mock.calls.length === 1) return mocks.files;
-      mocks.files = [existingFile, firstOauthFile];
-      return mocks.files;
-    });
-
-    await renderAccountsPage();
+    const renderer = await renderAccountsPage();
     await flushPromises();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15_000);
     });
     await flushPromises();
 
+    expect(mocks.loadFiles).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
+    mountedAccountsRenderers.delete(renderer);
+    const remounted = await renderAccountsPage();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(mocks.loadFiles).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await findButtonByText(remounted, 'common.refresh').props.onClick();
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(mocks.loadFiles).toHaveBeenCalledTimes(3);
     expect(firstMarker).not.toBeNull();
     expect(secondMarker).not.toBeNull();
     expect(mocks.quotaState.codexQuota).toHaveProperty(existingStoreKey, existingQuota);

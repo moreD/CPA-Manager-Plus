@@ -1300,8 +1300,7 @@ export function AccountsPage() {
   const accountActionCandidatesLoadedRef = useRef(false);
   const quotaCooldownsLoadedRef = useRef(false);
   const consumedCredentialMutationMarkerIdsRef = useRef<Set<string>>(new Set());
-  const credentialMutationMarkerAttemptsRef = useRef<Map<string, string>>(new Map());
-  const credentialMutationMarkerExhaustedRef = useRef<Map<string, string>>(new Map());
+  const credentialMutationMarkerObservedRef = useRef<Map<string, string>>(new Map());
   const credentialMutationMarkerSynchronizationsRef = useRef<Map<string, Promise<boolean>>>(
     new Map()
   );
@@ -1381,8 +1380,7 @@ export function AccountsPage() {
     setCodexReauthTarget(null);
     codexReauthBaselineRef.current = null;
     inspectionCodexReauthBaselineRef.current = null;
-    credentialMutationMarkerAttemptsRef.current.clear();
-    credentialMutationMarkerExhaustedRef.current.clear();
+    credentialMutationMarkerObservedRef.current.clear();
     quotaRefreshGenerationRef.current += 1;
     quotaRefreshBatchRef.current = null;
     quotaRequestVersionsRef.current.forEach((version, key) => {
@@ -1578,8 +1576,8 @@ export function AccountsPage() {
           const currentEvidence = JSON.stringify(
             createAccountCredentialMutationBaseline(files, marker.provider)
           );
-          const exhaustedEvidence = credentialMutationMarkerExhaustedRef.current.get(marker.id);
-          return exhaustedEvidence !== `${synchronizationScopeKey}\u001e${currentEvidence}`;
+          const observedEvidence = credentialMutationMarkerObservedRef.current.get(marker.id);
+          return observedEvidence !== `${synchronizationScopeKey}\u001e${currentEvidence}`;
         }
       );
       if (markers.length === 0) return false;
@@ -1587,7 +1585,7 @@ export function AccountsPage() {
         credentialMutationMarkerSynchronizationsRef.current.get(synchronizationScopeKey);
       if (pendingSynchronization) return pendingSynchronization;
 
-      const synchronization = (async () => {
+      const synchronization = Promise.resolve().then(async () => {
         try {
           const markersByProvider = new Map<string, AccountCredentialMutationMarker[]>();
           markers.forEach((marker) => {
@@ -1596,31 +1594,19 @@ export function AccountsPage() {
             markersByProvider.set(marker.provider, providerMarkers);
           });
 
-          const retry = await runCredentialVisibilityRetry<AuthFileItem[]>({
-            load: async () => {
-              const reloadedFiles = await reloadInspectionCredentialArtifacts({
+          const reloadedFiles = force
+            ? await reloadInspectionCredentialArtifacts({
                 requireSuccessfulReload: true,
                 loadCredentialsLast: true,
-              });
-              if (!reloadedFiles) throw new Error(t('notification.refresh_failed'));
-              return reloadedFiles;
-            },
-            isUnconfirmed: (reloadedFiles) =>
-              markers.some(
-                (marker) => !hasAccountCredentialMutationEvidence(marker, reloadedFiles)
-              ),
-            isActive: () =>
-              isMountedRef.current &&
-              activeCredentialEvidenceScopeKeyRef.current === synchronizationScopeKey,
-          });
+              })
+            : files;
           if (
-            retry.cancelled ||
+            !isMountedRef.current ||
             activeCredentialEvidenceScopeKeyRef.current !== synchronizationScopeKey ||
-            !retry.value
+            !reloadedFiles
           ) {
             return false;
           }
-          const reloadedFiles = retry.value;
           const consumedIds: string[] = [];
           markersByProvider.forEach((providerMarkers, provider) => {
             const observedEvidence = JSON.stringify(
@@ -1632,13 +1618,10 @@ export function AccountsPage() {
             providerMarkers
               .filter((marker) => !evidencedMarkers.includes(marker))
               .forEach((marker) => {
-                credentialMutationMarkerAttemptsRef.current.set(marker.id, observedEvidence);
-                if (retry.exhausted) {
-                  credentialMutationMarkerExhaustedRef.current.set(
-                    marker.id,
-                    `${synchronizationScopeKey}\u001e${observedEvidence}`
-                  );
-                }
+                credentialMutationMarkerObservedRef.current.set(
+                  marker.id,
+                  `${synchronizationScopeKey}\u001e${observedEvidence}`
+                );
               });
             const sortedEvidencedMarkers = [...evidencedMarkers].sort(
               (left, right) =>
@@ -1666,8 +1649,7 @@ export function AccountsPage() {
               );
               if (targetFiles.length === 0) return;
               consumedIds.push(marker.id);
-              credentialMutationMarkerAttemptsRef.current.delete(marker.id);
-              credentialMutationMarkerExhaustedRef.current.delete(marker.id);
+              credentialMutationMarkerObservedRef.current.delete(marker.id);
               providerConsumed = true;
             });
             if (!providerConsumed) return;
@@ -1677,7 +1659,7 @@ export function AccountsPage() {
               kind: 'oauth',
             });
           });
-          if (consumedIds.length === 0) return false;
+          if (consumedIds.length === 0) return force;
           consumedIds.forEach((id) => consumedCredentialMutationMarkerIdsRef.current.add(id));
           acknowledgeAccountCredentialMutationMarkers(consumedIds);
           return true;
@@ -1687,7 +1669,7 @@ export function AccountsPage() {
         } finally {
           credentialMutationMarkerSynchronizationsRef.current.delete(synchronizationScopeKey);
         }
-      })();
+      });
       credentialMutationMarkerSynchronizationsRef.current.set(
         synchronizationScopeKey,
         synchronization
@@ -1699,7 +1681,6 @@ export function AccountsPage() {
       credentialEvidenceScopeKey,
       files,
       reloadInspectionCredentialArtifacts,
-      t,
     ]
   );
 
