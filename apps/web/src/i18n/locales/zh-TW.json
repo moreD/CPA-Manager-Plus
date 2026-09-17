@@ -3686,6 +3686,23 @@
     "api_key_alias_duplicate": "API Key 別名已存在。",
     "method_not_allowed": "目前介面不支援該操作。"
   },
+  "public_usage": {
+    "title": "用量查詢",
+    "description": "輸入你的 API Key，查看 12 小時和 7 天固定視窗內的用量與額度。",
+    "key_placeholder": "輸入用戶端 API Key",
+    "key_hint": "API Key 僅在目前頁面中使用，重新整理或關閉頁面後清除。",
+    "query": "查詢 / 重新整理",
+    "used_usd": "已用額度（USD）",
+    "limit": "額度 {{value}}",
+    "remaining": "剩餘 {{value}}",
+    "unlimited": "不限額",
+    "window_start": "視窗開始：{{value}}",
+    "reset_at": "額度重設：{{value}}",
+    "updated_at": "更新於 {{value}} · 點擊查詢手動重新整理",
+    "invalid_key": "API Key 無效，請檢查後重試。",
+    "unavailable": "用量服務暫時無法使用，請稍後重試。",
+    "request_failed": "查詢失敗或逾時，請稍後重試。"
+  },
   "client_usage": {
     "title": "用戶端用量",
     "description": "依用戶端 API Key 分組顯示固定視窗的持久化用量和已計費 USD。",

@@ -41,11 +41,28 @@ const isDemoSiteBuild = (mode: string) =>
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const demoSite = isDemoSiteBuild(mode);
+  const usageSite = mode === 'usage';
   const useRealDemoFixtures = demoSite || mode === 'test';
 
   return {
     plugins: [
       react(),
+      ...(usageSite
+        ? [
+            {
+              name: 'public-usage-metadata',
+              transformIndexHtml(html: string) {
+                const icon = fs.readFileSync(path.resolve(__dirname, 'src/assets/icons/usage.svg'));
+                return html
+                  .replace('<title>CPA Manager Plus</title>', '<title>用量查询</title>')
+                  .replace(
+                    /<link rel="icon"[^>]*>/,
+                    `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,${icon.toString('base64')}" />`
+                  );
+              }
+            }
+          ]
+        : []),
       viteSingleFile({
         removeViteModuleLoader: true
       })
@@ -84,7 +101,7 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       target: 'es2020',
-      outDir: demoSite ? 'dist-demo' : 'dist',
+      outDir: demoSite ? 'dist-demo' : usageSite ? 'dist-usage' : 'dist',
       assetsInlineLimit: 100000000,
       chunkSizeWarningLimit: 100000000,
       cssCodeSplit: false,

@@ -3686,6 +3686,23 @@
     "api_key_alias_duplicate": "API Key 别名已存在。",
     "method_not_allowed": "当前接口不支持该操作。"
   },
+  "public_usage": {
+    "title": "用量查询",
+    "description": "输入你的 API Key，查看 12 小时和 7 天固定窗口内的用量与额度。",
+    "key_placeholder": "输入客户端 API Key",
+    "key_hint": "API Key 仅在当前页面中使用，刷新或关闭页面后清除。",
+    "query": "查询 / 刷新",
+    "used_usd": "已用额度（USD）",
+    "limit": "额度 {{value}}",
+    "remaining": "剩余 {{value}}",
+    "unlimited": "不限额",
+    "window_start": "窗口开始：{{value}}",
+    "reset_at": "额度重置：{{value}}",
+    "updated_at": "更新于 {{value}} · 点击查询手动刷新",
+    "invalid_key": "API Key 无效，请检查后重试。",
+    "unavailable": "用量服务暂不可用，请稍后重试。",
+    "request_failed": "查询失败或超时，请稍后重试。"
+  },
   "client_usage": {
     "title": "客户端用量",
     "description": "按客户端 API Key 分组展示固定窗口的持久化用量和已计费 USD。",

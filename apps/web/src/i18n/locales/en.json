@@ -3688,6 +3688,23 @@
     "api_key_alias_duplicate": "API key alias already exists.",
     "method_not_allowed": "This operation is not supported by the current service path."
   },
+  "public_usage": {
+    "title": "Usage lookup",
+    "description": "Enter your API key to view usage and limits for the fixed 12-hour and 7-day windows.",
+    "key_placeholder": "Enter your client API key",
+    "key_hint": "Your API key stays in this page and is cleared when you reload or close it.",
+    "query": "Check / Refresh",
+    "used_usd": "Used (USD)",
+    "limit": "Limit {{value}}",
+    "remaining": "Remaining {{value}}",
+    "unlimited": "Unlimited",
+    "window_start": "Window starts: {{value}}",
+    "reset_at": "Limit resets: {{value}}",
+    "updated_at": "Updated {{value}} · Check again to refresh",
+    "invalid_key": "Invalid API key. Check it and try again.",
+    "unavailable": "Usage service is temporarily unavailable. Please try again later.",
+    "request_failed": "The request failed or timed out. Please try again."
+  },
   "client_usage": {
     "title": "Client Usage",
     "description": "Persistent fixed-window usage and billed USD grouped by client API key.",

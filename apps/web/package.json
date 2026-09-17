@@ -8,6 +8,7 @@
     "dev:demo": "vite --mode demo",
     "build": "tsc && vite build",
     "build:bundle": "vite build",
+    "build:usage": "tsc && vite build --mode usage",
     "build:demo": "tsc && vite build --mode demo",
     "build:demo:bundle": "vite build --mode demo",
     "preview": "vite preview",

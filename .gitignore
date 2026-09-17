@@ -20,6 +20,7 @@ style.md
 node_modules
 dist
 dist-demo
+dist-usage
 dist-ssr
 *.local
 skills
