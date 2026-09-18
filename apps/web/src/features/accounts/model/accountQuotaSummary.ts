@@ -3,6 +3,7 @@ import type {
   AuthFileItem,
   ClaudeQuotaState,
   CodexQuotaState,
+  DevinQuotaState,
   KimiQuotaState,
   QuotaResetAccuracy,
   XaiBillingSummary,
@@ -78,6 +79,7 @@ export interface AccountQuotaStores {
   antigravityQuota: Record<string, AntigravityQuotaState>;
   claudeQuota: Record<string, ClaudeQuotaState>;
   codexQuota: Record<string, CodexQuotaState>;
+  devinQuota: Record<string, DevinQuotaState>;
   kimiQuota: Record<string, KimiQuotaState>;
   xaiQuota: Record<string, XaiQuotaState>;
 }
@@ -533,6 +535,46 @@ const quotaFromUsedWindows = (
 const codexMainQuotaWindows = (quota: CodexQuotaState) =>
   quota.windows.filter(isCodexMainQuotaWindow);
 
+const normalizeXaiPlanType = (planType?: string | null): string =>
+  planType ? planType.trim().toLowerCase().replace(/[\s\-_]+/g, '') : '';
+
+export const isExplicitFreeXaiPlan = (planType?: string | null): boolean => {
+  const normalized = normalizeXaiPlanType(planType);
+  if (!normalized) return false;
+  return (
+    normalized === 'free' ||
+    normalized === 'freetier' ||
+    normalized === 'xaifree' ||
+    normalized === 'xaifreetier'
+  );
+};
+
+export const isConfirmedPaidXaiPlan = (planType?: string | null): boolean => {
+  const normalized = normalizeXaiPlanType(planType);
+  if (!normalized) return false;
+  if (isExplicitFreeXaiPlan(planType)) return false;
+
+  return (
+    normalized.startsWith('supergrok') ||
+    normalized.startsWith('xpremium') ||
+    normalized === 'premium' ||
+    normalized.startsWith('premium+') ||
+    normalized.startsWith('premiumplus')
+  );
+};
+
+// Billing and account entitlement requires a confirmed paid plan.
+// AccountQuotaSummary fails closed for unconfirmed/unknown plans to avoid
+// driving account-level operational health or disable recommendations from partial data.
+export const hasConfirmedXaiBillingEntitlement = (
+  billing: XaiBillingSummary | null | undefined,
+  planType?: string | null
+): boolean => {
+  if (!billing) return false;
+  if (isExplicitFreeXaiPlan(planType)) return false;
+  return isConfirmedPaidXaiPlan(planType);
+};
+
 const quotaFromXaiBilling = (
   billing: XaiBillingSummary | null | undefined,
   planType: string | null,
@@ -541,7 +583,7 @@ const quotaFromXaiBilling = (
   if (!billing) {
     return quotaFromRemainingWindows([{ remainingPercent: null }], planType, options);
   }
-  if (billing.officialApiHealth) {
+  if (billing.officialApiHealth || !hasConfirmedXaiBillingEntitlement(billing, planType)) {
     return quotaFromRemainingWindows([{ remainingPercent: null }], planType, options);
   }
 
@@ -1027,6 +1069,24 @@ export const resolveAccountQuota = (
     return quotaFromXaiBilling(quota.billing, filePlanType, {
       fetchedAtMs: quota.fetchedAtMs,
     });
+  }
+
+  if (provider === 'devin') {
+    const quota = getCredentialScopedQuotaState(stores.devinQuota, file);
+    if (!quota) return emptyQuota(filePlanType);
+    const planType = quota.plan ?? filePlanType;
+    if (quota.status === 'loading') return loadingQuota(planType);
+    if (quota.status === 'error')
+      return quotaFromError(quota.error, planType, quota.errorStatus, quota.failedAtMs);
+    return quotaFromRemainingWindows(
+      quota.windows.map((window) => ({
+        remainingPercent: window.remainingPercent,
+        resetAtMs: window.resetAtMs,
+        resetAccuracy: 'exact',
+      })),
+      planType,
+      { fetchedAtMs: quota.fetchedAtMs }
+    );
   }
 
   return emptyQuota(filePlanType);

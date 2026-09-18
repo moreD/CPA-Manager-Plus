@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -58,7 +60,7 @@ func TestStoreCompatMigratesLegacyCodexInspectionOwnershipIdentity(t *testing.T)
 	if err != nil {
 		t.Fatalf("list migrated ownership: %v", err)
 	}
-	if len(items) != 2 || items[0].AuthIndex != "auth-1" || items[0].AccountSnapshot != "" || items[1].AuthIndex != "auth-2" || items[1].AccountSnapshot != "" {
+	if len(items) != 2 || items[0].AuthIndex != "auth-1" || items[0].AccountSnapshot != "" || items[1].AuthIndex != "auth-2" || items[1].AccountSnapshot != "bob@example.com" {
 		t.Fatalf("migrated ownership = %#v", items)
 	}
 }
@@ -163,7 +165,7 @@ func TestStoreCompatMigratesLegacyUsageEventSchema(t *testing.T) {
 	ttft := int64(320)
 	_, err = store.InsertEvents(context.Background(), []usage.Event{
 		{
-			EventHash:            "legacy-schema-event",
+			EventHash:            compatTestHash("legacy-schema-event"),
 			TimestampMS:          1_778_000_000_000,
 			Timestamp:            "2026-05-06T00:00:00Z",
 			Model:                "gpt-test",
@@ -198,7 +200,7 @@ func TestStoreCompatMigratesLegacyUsageEventSchema(t *testing.T) {
 	}
 	var migrated usage.Event
 	for _, event := range events {
-		if event.EventHash == "legacy-schema-event" {
+		if event.EventHash == compatTestHash("legacy-schema-event") {
 			migrated = event
 			break
 		}
@@ -310,8 +312,9 @@ func TestStoreCompatSettingsUsageAndExport(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
 		t.Fatalf("decode first export line: %v", err)
 	}
-	if first.EventHash != "event-a" {
-		t.Fatalf("first exported hash = %q, want event-a", first.EventHash)
+	wantHash := compatTestHash("event-a")
+	if first.EventHash != wantHash {
+		t.Fatalf("first exported hash = %q, want %q", first.EventHash, wantHash)
 	}
 	if first.FailBody != "" || first.RawJSON != "" {
 		t.Fatalf("export should omit raw sensitive fields: %#v", first)
@@ -537,9 +540,14 @@ func usageEventColumns(t *testing.T, db *sql.DB) map[string]bool {
 	return columns
 }
 
+func compatTestHash(hash string) string {
+	sum := sha256.Sum256([]byte(hash))
+	return hex.EncodeToString(sum[:])
+}
+
 func compatStoreEvent(hash string, offset int64) usage.Event {
 	return usage.Event{
-		EventHash:    hash,
+		EventHash:    compatTestHash(hash),
 		TimestampMS:  1_778_000_000_000 + offset,
 		Timestamp:    "2026-05-06T00:00:00Z",
 		Model:        "gpt-test",

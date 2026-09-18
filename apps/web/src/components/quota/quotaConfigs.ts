@@ -7,6 +7,8 @@ import type {
   CodexQuotaWindow,
   CodexRateLimitResetCredit,
   CredentialScopedQuotaState,
+  DevinQuotaData,
+  DevinQuotaState,
   KimiQuotaState,
   XaiBillingSummary,
   XaiQuotaState,
@@ -25,14 +27,18 @@ import {
   fetchAntigravityQuota,
   fetchClaudeQuota,
   fetchCodexQuota,
+  fetchCodexQuotaSummary,
+  fetchDevinQuota,
   fetchKimiQuota,
   fetchXaiQuota,
   filterFreshCodexQuotaWindows,
   findCodexProviderWindowMatch,
+  isCodexMainQuotaWindow,
   isCodexMainQuotaModelScope,
   isValidQuotaResetAtMs,
   resolveCodexUsageQuotaScope,
   resolveCodexPlanType,
+  shouldClearInheritedCodexQuotaProgress,
 } from '@/utils/quota';
 import {
   buildObservedCodexQuotaFromHeaderSnapshot,
@@ -50,7 +56,7 @@ import {
   scopeQuotaStateToCredential,
 } from '@/utils/quota/credentialScope';
 
-type QuotaType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai';
+type QuotaType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai' | 'devin';
 
 export interface QuotaConfig<TState, TData> {
   type: QuotaType;
@@ -147,6 +153,9 @@ type CodexQuotaMergeState = DisplayQuotaState & Partial<CodexQuotaState>;
 const readFiniteTimestamp = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
 
+const readPositiveTimestamp = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+
 const hasObservedValue = (value: unknown): boolean => {
   if (value === undefined || value === null) return false;
   if (typeof value === 'string') return value.trim() !== '';
@@ -160,16 +169,44 @@ const hasKnownResetLabel = (value: unknown): value is string => {
   return trimmed !== '' && trimmed !== '-';
 };
 
+const readCodexWindowDurationMs = (window: CodexQuotaWindow): number | null => {
+  const seconds = window.limitWindowSeconds;
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const durationMs = seconds * 1000;
+  return Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null;
+};
+
+const hasReliableCodexWindowEvidence = (window: CodexQuotaWindow): boolean =>
+  readCodexWindowDurationMs(window) !== null ||
+  (isValidQuotaResetAtMs(window.resetAtMs) && window.resetAccuracy === 'exact');
+
+const isCodexZeroOnlyObservedQuotaPlaceholder = (window: CodexQuotaWindow): boolean =>
+  window.observationSource === 'response_header' &&
+  window.usedPercent === 0 &&
+  isCodexMainQuotaWindow(window) &&
+  !hasReliableCodexWindowEvidence(window);
+
 const stampCodexQuotaWindows = (
   windows: CodexQuotaWindow[] | undefined,
   observationSource: NonNullable<CodexQuotaWindow['observationSource']>,
   observedAtMs: number | null
 ): CodexQuotaWindow[] | undefined =>
-  windows?.map((window) => ({
-    ...window,
-    observationSource: window.observationSource ?? observationSource,
-    observedAtMs: readFiniteTimestamp(window.observedAtMs) ?? observedAtMs,
-  }));
+  windows?.map((window) => {
+    const stampedObservedAtMs = readFiniteTimestamp(window.observedAtMs) ?? observedAtMs;
+    const hasQuotaProgress =
+      typeof window.usedPercent === 'number' && Number.isFinite(window.usedPercent);
+    const quotaProgressObservedAtMs = !hasQuotaProgress
+      ? null
+      : window.quotaProgressObservedAtMs !== undefined
+        ? readPositiveTimestamp(window.quotaProgressObservedAtMs)
+        : stampedObservedAtMs;
+    return {
+      ...window,
+      observationSource: window.observationSource ?? observationSource,
+      observedAtMs: stampedObservedAtMs,
+      quotaProgressObservedAtMs,
+    };
+  });
 
 const mergeCodexQuotaWindow = (
   activeWindow: CodexQuotaWindow,
@@ -177,6 +214,27 @@ const mergeCodexQuotaWindow = (
 ): CodexQuotaWindow => {
   const hasObservedResetLabel = hasKnownResetLabel(observedWindow.resetLabel);
   const hasObservedResetAt = isValidQuotaResetAtMs(observedWindow.resetAtMs);
+  const hasObservedUsedPercent =
+    typeof observedWindow.usedPercent === 'number' && Number.isFinite(observedWindow.usedPercent);
+  const observedQuotaProgressObservedAtMs = hasObservedUsedPercent
+    ? observedWindow.quotaProgressObservedAtMs !== undefined
+      ? readPositiveTimestamp(observedWindow.quotaProgressObservedAtMs)
+      : readPositiveTimestamp(observedWindow.observedAtMs)
+    : null;
+  const confirmedCycleRollover = shouldClearInheritedCodexQuotaProgress(
+    {
+      providerWindowId: activeWindow.id,
+      endMs: activeWindow.resetAtMs,
+      durationSeconds: activeWindow.limitWindowSeconds,
+      boundaryAccuracy: activeWindow.resetAccuracy,
+    },
+    {
+      providerWindowId: observedWindow.id,
+      endMs: observedWindow.resetAtMs,
+      durationSeconds: observedWindow.limitWindowSeconds,
+      boundaryAccuracy: observedWindow.resetAccuracy,
+    }
+  );
   const resetMetadata = hasObservedResetAt
     ? {
         resetLabel: hasObservedResetLabel ? observedWindow.resetLabel : '-',
@@ -193,15 +251,15 @@ const mergeCodexQuotaWindow = (
 
   return {
     ...activeWindow,
+    ...(confirmedCycleRollover ? { usedPercent: null, quotaProgressObservedAtMs: null } : {}),
     ...(hasObservedValue(observedWindow.label) ? { label: observedWindow.label } : {}),
     ...(hasObservedValue(observedWindow.labelKey) ? { labelKey: observedWindow.labelKey } : {}),
     ...(observedWindow.labelParams && Object.keys(observedWindow.labelParams).length > 0
       ? { labelParams: observedWindow.labelParams }
       : {}),
-    ...(observedWindow.usedPercent !== null &&
-    observedWindow.usedPercent !== undefined &&
-    Number.isFinite(observedWindow.usedPercent)
-      ? { usedPercent: observedWindow.usedPercent }
+    ...(hasObservedUsedPercent ? { usedPercent: observedWindow.usedPercent } : {}),
+    ...(hasObservedUsedPercent
+      ? { quotaProgressObservedAtMs: observedQuotaProgressObservedAtMs }
       : {}),
     ...resetMetadata,
     ...(observedWindow.limitWindowSeconds !== null &&
@@ -278,7 +336,7 @@ const mergeObservedQuotaIntoActive = <TState extends DisplayQuotaState>(
     observed.windows,
     'response_header',
     readFiniteTimestamp(observed.observedAtMs)
-  );
+  )?.filter((window) => !isCodexZeroOnlyObservedQuotaPlaceholder(window));
   const scopedObservation =
     observed.observedFromUsageHeaders === true &&
     (observed.observedModelScope === undefined ||
@@ -335,7 +393,7 @@ const appendMissingObservedQuotaWindows = <TState extends DisplayQuotaState>(
       observed.windows,
       'response_header',
       readFiniteTimestamp(observed.observedAtMs)
-    ) ?? [];
+    )?.filter((window) => !isCodexZeroOnlyObservedQuotaPlaceholder(window)) ?? [];
   const isAlreadyRepresented = (observedIndex: number): boolean => {
     return activeWindows.some(
       (_, activeIndex) =>
@@ -502,6 +560,8 @@ export const buildObservedCodexQuotaState = (
               resetAccuracy: fallbackRecoverAtMS ? 'estimated' : 'unknown',
               observationSource: 'response_header',
               observedAtMs: snapshot?.timestamp_ms ?? null,
+              quotaProgressObservedAtMs:
+                fallbackUsedPercent !== null ? readFiniteTimestamp(snapshot?.timestamp_ms) : null,
               modelScope: observedScope.modelScope,
             },
           ]
@@ -644,6 +704,7 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
       data.rateLimitResetCreditsApplicableAvailableCount,
     rateLimitResetCredits: data.rateLimitResetCredits,
     rateLimitResetCreditsError: data.rateLimitResetCreditsError,
+    resetCreditsEvidenceAtMs: data.resetCreditsEvidenceAtMs,
     ...buildQuotaCredentialIdentity(file),
     fetchedAtMs:
       readFiniteTimestamp(data.observedAtMs) ??
@@ -668,6 +729,11 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
     (quota.rateLimitResetCreditsApplicableAvailableCount === null ||
       quota.rateLimitResetCreditsApplicableAvailableCount === undefined ||
       quota.rateLimitResetCreditsApplicableAvailableCount > 0),
+};
+
+export const CODEX_SUMMARY_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
+  ...CODEX_CONFIG,
+  fetchQuota: fetchCodexQuotaSummary,
 };
 
 export const KIMI_CONFIG: QuotaConfig<KimiQuotaState, KimiQuotaData> = {
@@ -724,3 +790,43 @@ export const XAI_CONFIG: QuotaConfig<XaiQuotaState, XaiBillingSummary> = {
   }),
   scopeState: scopeCredentialQuotaState,
 };
+
+export const DEVIN_CONFIG: QuotaConfig<DevinQuotaState, DevinQuotaData> = {
+  type: 'devin',
+  i18nPrefix: 'devin_quota',
+  fetchQuota: fetchDevinQuota,
+  getStoreKey: getQuotaCredentialStoreKey,
+  buildLoadingState: (file) => ({
+    status: 'loading',
+    windows: [],
+    observedAtMs: null,
+    plan: null,
+    planStartMs: null,
+    planEndMs: null,
+    ...buildQuotaCredentialIdentity(file),
+  }),
+  buildSuccessState: (data, file) => ({
+    status: 'success',
+    windows: data.windows,
+    observedAtMs: data.observedAtMs,
+    plan: data.plan,
+    planStartMs: data.planStartMs,
+    planEndMs: data.planEndMs,
+    ...buildQuotaCredentialIdentity(file),
+    fetchedAtMs: data.observedAtMs ?? Date.now(),
+  }),
+  buildErrorState: (message, status, file) => ({
+    status: 'error',
+    windows: [],
+    observedAtMs: null,
+    plan: null,
+    planStartMs: null,
+    planEndMs: null,
+    error: message,
+    errorStatus: status,
+    ...buildQuotaCredentialIdentity(file),
+    failedAtMs: Date.now(),
+  }),
+  scopeState: scopeCredentialQuotaState,
+};
+

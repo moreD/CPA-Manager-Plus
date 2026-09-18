@@ -16,6 +16,7 @@ import (
 	quotasnapshotrepo "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/quotasnapshot"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usageidentity"
 )
 
 func newQuotaSnapshotTestService(t *testing.T, nowMS int64) *Service {
@@ -42,6 +43,62 @@ func quotaSnapshotTestAccount() AccountTarget {
 		AuthProviderSnapshot: "codex",
 		AuthIndex:            "auth-1",
 		AccountSnapshot:      "user@example.com",
+	}
+}
+
+func writeQuotaLifecycleSnapshotForKey(
+	t *testing.T,
+	service *Service,
+	accountKey, observationID string,
+	observedAtMS, cycleStartMS, cycleEndMS, durationSeconds int64,
+	usedPercent float64,
+	planType string,
+) {
+	t.Helper()
+	entry := WriteEntry{
+		Provider: "codex",
+		Observation: &ObservationInput{
+			Source:              "api_query",
+			SourceObservationID: observationID,
+			ObservedAtMS:        observedAtMS,
+			InventoryScopeKey:   "codex:rate-limits",
+			InventoryMode:       "partial",
+		},
+		Windows: []WindowInput{{
+			ProviderWindowID:    "weekly",
+			WindowKind:          "weekly",
+			WindowMode:          "fixed",
+			ModelScopeKind:      "family",
+			ModelScopeKey:       "codex_main",
+			Source:              "api_query",
+			SourceObservationID: observationID,
+			ObservedAtMS:        observedAtMS,
+			BoundaryAccuracy:    "exact",
+			CycleStartMS:        &cycleStartMS,
+			CycleEndMS:          &cycleEndMS,
+			DurationSeconds:     &durationSeconds,
+			UsedPercent:         &usedPercent,
+			PlanType:            planType,
+		}},
+	}
+	observation, err := normalizeObservationInput(accountKey, "codex", entry, service.now().UnixMilli())
+	if err != nil {
+		t.Fatalf("normalize quota observation: %v", err)
+	}
+	snapshot, err := normalizeWindowInput(accountKey, "codex", entry.Windows[0], service.now().UnixMilli())
+	if err != nil {
+		t.Fatalf("normalize quota snapshot: %v", err)
+	}
+	snapshot.InventoryScopeKey = observation.InventoryScopeKey
+	write := model.AccountQuotaObservationWrite{
+		Observation: observation,
+		Snapshots:   []model.AccountQuotaSnapshot{snapshot},
+	}
+	write.Observation.WindowCount = len(write.Snapshots)
+	write.Snapshots[0].ContentHash = snapshotContentHash(write.Snapshots[0])
+	write.Observation.ObservationHash = observationHash(write)
+	if err := service.store.QuotaSnapshots.InsertObservationWrites(context.Background(), []model.AccountQuotaObservationWrite{write}); err != nil {
+		t.Fatalf("write quota lifecycle snapshot: %v", err)
 	}
 }
 
@@ -100,6 +157,302 @@ func TestWriteQuerySelectsLatestCompleteObservationAndMergesCodexResetCredits(t 
 	}
 	if got := window.FieldSources["reset_credits"].Source; got != "api_query" {
 		t.Fatalf("reset credit source = %q, want api_query", got)
+	}
+}
+
+func TestCodexQuotaSnapshotsStayMemberScopedAndIgnoreLegacyWorkspaceKey(t *testing.T) {
+	service, path := newQuotaSnapshotTestServiceWithPath(t, 50_000)
+	ctx := context.Background()
+	cycleStart := int64(100)
+	cycleEnd := int64(18_100)
+	duration := int64(18)
+	window := func(used float64, observedAtMS int64) WindowInput {
+		return WindowInput{
+			ProviderWindowID: "five-hour", WindowKind: "five_hour", WindowMode: "fixed",
+			ModelScopeKind: "all", Source: "api_query", SourceObservationID: fmt.Sprintf("observation-%d", observedAtMS),
+			ObservedAtMS: observedAtMS, BoundaryAccuracy: "exact", UsedPercent: &used,
+			CycleStartMS: &cycleStart, CycleEndMS: &cycleEnd, DurationSeconds: &duration,
+		}
+	}
+	account := func(member string) AccountTarget {
+		return AccountTarget{
+			AuthFileSnapshot:      member + ".json",
+			AuthProviderSnapshot:  "codex",
+			AuthAccountIDSnapshot: "workspace-1",
+			AuthIndex:             "auth-" + member,
+			AccountSnapshot:       member + "@example.com",
+			Source:                member + ".json",
+		}
+	}
+	for _, entry := range []WriteEntry{
+		{RowKey: "alice", Provider: "codex", Account: account("alice"), Observation: &ObservationInput{
+			Source: "api_query", SourceObservationID: "observation-1000", ObservedAtMS: 1_000,
+			InventoryScopeKey: "codex:rate-limits", InventoryMode: "partial",
+		}, Windows: []WindowInput{window(10, 1_000)}},
+		{RowKey: "bob", Provider: "codex", Account: account("bob"), Observation: &ObservationInput{
+			Source: "api_query", SourceObservationID: "observation-2000", ObservedAtMS: 2_000,
+			InventoryScopeKey: "codex:rate-limits", InventoryMode: "partial",
+		}, Windows: []WindowInput{window(20, 2_000)}},
+	} {
+		if _, err := service.Write(ctx, WriteRequest{Entries: []WriteEntry{entry}}); err != nil {
+			t.Fatalf("write %s snapshot: %v", entry.RowKey, err)
+		}
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open quota database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	// This is the v3 workspace-only key emitted before Codex member identity
+	// was introduced. It is intentionally left orphaned rather than fanned out.
+	legacyWorkspaceKey := "usage-account-history:3:codex-account:636F646578:776F726B73706163652D31"
+	if _, err := db.Exec(`insert into account_quota_snapshots (
+		account_key, provider, provider_window_id, window_kind, window_mode,
+		model_scope_kind, source, source_observation_id, observed_at_ms,
+		boundary_accuracy, used_percent, created_at_ms
+	) values (?, 'codex', 'five-hour', 'five_hour', 'fixed', 'all',
+		'api_query', 'legacy-workspace', 3_000, 'exact', 99, 3_000)`, legacyWorkspaceKey); err != nil {
+		t.Fatalf("insert legacy workspace snapshot: %v", err)
+	}
+
+	alice := account("alice")
+	bob := account("bob")
+	aliceKey, aliceOK := usageidentity.AccountKey(alice.identityFields("codex"))
+	bobKey, bobOK := usageidentity.AccountKey(bob.identityFields("codex"))
+	if !aliceOK || !bobOK || aliceKey == bobKey {
+		t.Fatalf("member account keys = alice:%q/%v bob:%q/%v", aliceKey, aliceOK, bobKey, bobOK)
+	}
+	for _, test := range []struct {
+		name    string
+		rowKey  string
+		account AccountTarget
+		want    float64
+	}{
+		{name: "Alice", rowKey: "alice", account: alice, want: 10},
+		{name: "Bob", rowKey: "bob", account: bob, want: 20},
+	} {
+		result, err := service.Query(ctx, QueryRequest{Accounts: []QueryAccount{{
+			RowKey: test.rowKey, Provider: "codex", Account: test.account,
+		}}})
+		if err != nil {
+			t.Fatalf("query %s snapshot: %v", test.name, err)
+		}
+		if len(result.Items) != 1 || result.Items[0].AccountKey == legacyWorkspaceKey || len(result.Items[0].Windows) != 1 {
+			t.Fatalf("%s query included legacy/fan-out data: %#v", test.name, result)
+		}
+		if result.Items[0].Windows[0].UsedPercent == nil || *result.Items[0].Windows[0].UsedPercent != test.want {
+			t.Fatalf("%s used percent = %#v, want %v", test.name, result.Items[0].Windows[0], test.want)
+		}
+	}
+	var aliceRows, bobRows, legacyRows int
+	if err := db.QueryRow(`select count(*) from account_quota_snapshots where account_key = ?`, aliceKey).Scan(&aliceRows); err != nil {
+		t.Fatalf("count Alice snapshots: %v", err)
+	}
+	if err := db.QueryRow(`select count(*) from account_quota_snapshots where account_key = ?`, bobKey).Scan(&bobRows); err != nil {
+		t.Fatalf("count Bob snapshots: %v", err)
+	}
+	if err := db.QueryRow(`select count(*) from account_quota_snapshots where account_key = ?`, legacyWorkspaceKey).Scan(&legacyRows); err != nil {
+		t.Fatalf("count legacy snapshots: %v", err)
+	}
+	if aliceRows != 1 || bobRows != 1 || legacyRows != 1 {
+		t.Fatalf("quota snapshot rows were migrated/fanned out: Alice=%d Bob=%d legacy=%d", aliceRows, bobRows, legacyRows)
+	}
+}
+
+func TestQueryBridgesLegacyCodexPreviousCycleOnlyForConsistentPersonalPlan(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		previousPlan      string
+		legacyCurrentPlan string
+		memberCurrentPlan string
+		mixedMemberPlan   string
+		memberStartOffset int64
+		wantBridge        bool
+	}{
+		{name: "Plus", previousPlan: "plus", legacyCurrentPlan: "plus", memberCurrentPlan: "plus", wantBridge: true},
+		{name: "Free", previousPlan: "free", legacyCurrentPlan: "free", memberCurrentPlan: "free", wantBridge: true},
+		{name: "Pro", previousPlan: "pro", legacyCurrentPlan: "pro", memberCurrentPlan: "pro", wantBridge: true},
+		{name: "Go", previousPlan: "go", legacyCurrentPlan: "go", memberCurrentPlan: "go", wantBridge: true},
+		{name: "normalized personal plan", previousPlan: " Plus ", legacyCurrentPlan: "PLUS", memberCurrentPlan: "plus", wantBridge: true},
+		{name: "Team", previousPlan: "team", legacyCurrentPlan: "team", memberCurrentPlan: "team"},
+		{name: "Business", previousPlan: "business", legacyCurrentPlan: "business", memberCurrentPlan: "business"},
+		{name: "Enterprise", previousPlan: "enterprise", legacyCurrentPlan: "enterprise", memberCurrentPlan: "enterprise"},
+		{name: "Edu", previousPlan: "edu", legacyCurrentPlan: "edu", memberCurrentPlan: "edu"},
+		{name: "unknown plan", previousPlan: "", legacyCurrentPlan: "", memberCurrentPlan: ""},
+		{name: "future plan", previousPlan: "starter", legacyCurrentPlan: "starter", memberCurrentPlan: "starter"},
+		{name: "plan changed", previousPlan: "free", legacyCurrentPlan: "plus", memberCurrentPlan: "plus"},
+		{name: "mixed member cycle", previousPlan: "plus", legacyCurrentPlan: "plus", memberCurrentPlan: "plus", mixedMemberPlan: "team"},
+		{name: "current boundary mismatch", previousPlan: "plus", legacyCurrentPlan: "plus", memberCurrentPlan: "plus", memberStartOffset: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, path := newQuotaSnapshotTestServiceWithPath(t, 250_000)
+			account := AccountTarget{
+				AuthFileSnapshot:      "member.json",
+				AuthProviderSnapshot:  "codex",
+				AuthAccountIDSnapshot: "workspace-1",
+				AuthIndex:             "auth-member",
+				AccountSnapshot:       "member@example.com",
+				Source:                "member.json",
+			}
+			memberKey, memberOK := usageidentity.AccountKey(account.identityFields("codex"))
+			legacyKey, legacyOK := usageidentity.LegacyCodexWorkspaceAccountKey("codex", "workspace-1")
+			if !memberOK || !legacyOK || memberKey == legacyKey {
+				t.Fatalf("quota bridge keys = member:%q/%v legacy:%q/%v", memberKey, memberOK, legacyKey, legacyOK)
+			}
+
+			const durationSeconds = int64(100)
+			const previousStartMS = int64(100_000)
+			const currentStartMS = int64(200_000)
+			const currentEndMS = int64(300_000)
+			writeQuotaLifecycleSnapshotForKey(t, service, legacyKey, "legacy-previous", 150_000,
+				previousStartMS, currentStartMS, durationSeconds, 70, test.previousPlan)
+			writeQuotaLifecycleSnapshotForKey(t, service, legacyKey, "legacy-current", 220_000,
+				currentStartMS, currentEndMS, durationSeconds, 90, test.legacyCurrentPlan)
+			memberStartMS := currentStartMS + test.memberStartOffset
+			memberEndMS := currentEndMS + test.memberStartOffset
+			writeQuotaLifecycleSnapshotForKey(t, service, memberKey, "member-current", 221_000,
+				memberStartMS, memberEndMS, durationSeconds, 11, test.memberCurrentPlan)
+			if test.mixedMemberPlan != "" {
+				writeQuotaLifecycleSnapshotForKey(t, service, memberKey, "member-current-mixed", 222_000,
+					memberStartMS, memberEndMS, durationSeconds, 12, test.mixedMemberPlan)
+			}
+
+			result, err := service.Query(context.Background(), QueryRequest{Accounts: []QueryAccount{{
+				RowKey: "member", Provider: "codex", Account: account,
+			}}, NowMS: 250_000})
+			if err != nil {
+				t.Fatalf("query bridged quota lifecycle: %v", err)
+			}
+			if len(result.Items) != 1 || len(result.Items[0].Windows) != 1 {
+				t.Fatalf("quota bridge result = %#v", result)
+			}
+			window := result.Items[0].Windows[0]
+			wantUsedPercent := 11.0
+			if test.mixedMemberPlan != "" {
+				wantUsedPercent = 12
+			}
+			if window.UsedPercent == nil || *window.UsedPercent != wantUsedPercent {
+				t.Fatalf("member current usage was replaced by legacy workspace data: %#v", window)
+			}
+			if gotBridge := window.PreviousCycle != nil; gotBridge != test.wantBridge {
+				t.Fatalf("previous cycle bridged = %v, want %v: %#v", gotBridge, test.wantBridge, window.PreviousCycle)
+			}
+			if test.wantBridge {
+				if window.CurrentCycle == nil || window.PreviousCycle.ActualStartMS != previousStartMS ||
+					window.PreviousCycle.ActualEndMS == nil || *window.PreviousCycle.ActualEndMS != currentStartMS ||
+					window.PreviousCycle.EndReason != "scheduled" ||
+					window.PreviousCycle.ActivationID == window.CurrentCycle.ActivationID {
+					t.Fatalf("bridged previous cycle = %#v current=%#v", window.PreviousCycle, window.CurrentCycle)
+				}
+			}
+
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatalf("open quota bridge database: %v", err)
+			}
+			defer db.Close()
+			var legacySnapshots, memberSnapshots int
+			if err := db.QueryRow(`select count(*) from account_quota_snapshots where account_key = ?`, legacyKey).Scan(&legacySnapshots); err != nil {
+				t.Fatalf("count legacy quota snapshots: %v", err)
+			}
+			if err := db.QueryRow(`select count(*) from account_quota_snapshots where account_key = ?`, memberKey).Scan(&memberSnapshots); err != nil {
+				t.Fatalf("count member quota snapshots: %v", err)
+			}
+			wantMemberSnapshots := 1
+			if test.mixedMemberPlan != "" {
+				wantMemberSnapshots = 2
+			}
+			if legacySnapshots != 2 || memberSnapshots != wantMemberSnapshots {
+				t.Fatalf("quota query rewrote snapshots: legacy=%d member=%d", legacySnapshots, memberSnapshots)
+			}
+		})
+	}
+}
+
+func TestQueryKeepsMemberPreviousCycleInsteadOfLegacyWorkspaceCycle(t *testing.T) {
+	service := newQuotaSnapshotTestService(t, 250_000)
+	account := AccountTarget{
+		AuthFileSnapshot:      "member.json",
+		AuthProviderSnapshot:  "codex",
+		AuthAccountIDSnapshot: "workspace-1",
+		AuthIndex:             "auth-member",
+		AccountSnapshot:       "member@example.com",
+		Source:                "member.json",
+	}
+	memberKey, _ := usageidentity.AccountKey(account.identityFields("codex"))
+	legacyKey, _ := usageidentity.LegacyCodexWorkspaceAccountKey("codex", "workspace-1")
+	for _, accountKey := range []string{legacyKey, memberKey} {
+		writeQuotaLifecycleSnapshotForKey(t, service, accountKey, accountKey+"-previous", 150_000,
+			100_000, 200_000, 100, 70, "plus")
+		writeQuotaLifecycleSnapshotForKey(t, service, accountKey, accountKey+"-current", 220_000,
+			200_000, 300_000, 100, 10, "plus")
+	}
+
+	result, err := service.Query(context.Background(), QueryRequest{Accounts: []QueryAccount{{
+		RowKey: "member", Provider: "codex", Account: account,
+	}}, NowMS: 250_000})
+	if err != nil {
+		t.Fatalf("query member lifecycle: %v", err)
+	}
+	if len(result.Items) != 1 || len(result.Items[0].Windows) != 1 {
+		t.Fatalf("member lifecycle result = %#v", result)
+	}
+	window := result.Items[0].Windows[0]
+	if window.CurrentCycle == nil || window.PreviousCycle == nil ||
+		window.PreviousCycle.ActivationID != window.CurrentCycle.ActivationID {
+		t.Fatalf("member previous cycle was replaced by legacy workspace cycle: current=%#v previous=%#v", window.CurrentCycle, window.PreviousCycle)
+	}
+}
+
+func TestLegacyCodexQuotaBridgeAcceptsOnlyReliableClosedCycleReasons(t *testing.T) {
+	currentStartMS := int64(200_000)
+	currentEndMS := int64(300_000)
+	previousEndMS := currentStartMS
+	durationSeconds := int64(100)
+	cycle := func(id, activationID int64, state, endReason string, startMS int64, endMS *int64) *model.AccountQuotaCycle {
+		return &model.AccountQuotaCycle{
+			ID:               id,
+			ActivationID:     activationID,
+			State:            state,
+			ScheduledStartMS: &startMS,
+			ScheduledEndMS:   endMS,
+			ActualStartMS:    startMS,
+			ActualEndMS:      endMS,
+			DurationSeconds:  &durationSeconds,
+			BoundaryAccuracy: "exact",
+			EndReason:        endReason,
+		}
+	}
+	for _, test := range []struct {
+		endReason string
+		want      bool
+	}{
+		{endReason: "scheduled", want: true},
+		{endReason: "provider_reset", want: true},
+		{endReason: "early_reset", want: true},
+		{endReason: "mode_changed"},
+		{endReason: "window_removed"},
+		{endReason: ""},
+	} {
+		t.Run(test.endReason, func(t *testing.T) {
+			current := model.AccountQuotaWindowState{
+				WindowMode:   "fixed",
+				Availability: "active",
+				CurrentCycle: cycle(3, 2, "active", "", currentStartMS, nil),
+			}
+			legacy := model.AccountQuotaWindowState{
+				WindowMode:    "fixed",
+				Availability:  "active",
+				CurrentCycle:  cycle(2, 1, "active", "", currentStartMS, nil),
+				PreviousCycle: cycle(1, 1, "closed", test.endReason, 100_000, &previousEndMS),
+			}
+			current.CurrentCycle.ScheduledEndMS = &currentEndMS
+			legacy.CurrentCycle.ScheduledEndMS = &currentEndMS
+			if got := legacyCodexQuotaBridgeCyclesMatch(current, legacy); got != test.want {
+				t.Fatalf("legacyCodexQuotaBridgeCyclesMatch(%q) = %v, want %v", test.endReason, got, test.want)
+			}
+		})
 	}
 }
 
@@ -4977,4 +5330,227 @@ func queryQuotaLifecycleWindows(t *testing.T, service *Service, includeInactive 
 		windows[window.ProviderWindowID] = window
 	}
 	return windows
+}
+
+func TestDevinQuotaSnapshotLifecycle(t *testing.T) {
+	var (
+		baseMS         = int64(1_780_000_000_000)
+		dailyDuration  = int64(86400)
+		weeklyDuration = int64(604800)
+	)
+	service := newQuotaSnapshotTestService(t, baseMS+2*3600*1000)
+	devinAccount := AccountTarget{
+		AuthFileSnapshot:     "devin.json",
+		AuthProviderSnapshot: "devin",
+		AuthIndex:            "auth-devin-1",
+		AccountSnapshot:      "devin-user@example.com",
+	}
+
+	dailyEndMS := baseMS + dailyDuration*1000
+	weeklyEndMS := baseMS + weeklyDuration*1000
+	dailyUsed1 := 20.0
+	weeklyUsed1 := 40.0
+	obs1AtMS := baseMS + 3600*1000
+
+	// 1. Initial write with Devin Daily and Weekly windows under complete observation
+	entry1 := WriteEntry{
+		RowKey:   "row-devin",
+		Provider: "devin",
+		Account:  devinAccount,
+		Observation: &ObservationInput{
+			Source:              "api_query",
+			SourceObservationID: "devin-obs-1",
+			ObservedAtMS:        obs1AtMS,
+			InventoryScopeKey:   "devin:quota-windows",
+			InventoryMode:       "complete",
+		},
+		Windows: []WindowInput{
+			{
+				ProviderWindowID: "devin:daily",
+				WindowKind:       "daily",
+				WindowMode:       "fixed",
+				ModelScopeKind:   "all",
+				Source:           "api_query",
+				ObservedAtMS:     obs1AtMS,
+				BoundaryAccuracy: "exact",
+				CycleStartMS:     &baseMS,
+				CycleEndMS:       &dailyEndMS,
+				DurationSeconds:  &dailyDuration,
+				UsedPercent:      &dailyUsed1,
+			},
+			{
+				ProviderWindowID: "devin:weekly",
+				WindowKind:       "weekly",
+				WindowMode:       "fixed",
+				ModelScopeKind:   "all",
+				Source:           "api_query",
+				ObservedAtMS:     obs1AtMS,
+				BoundaryAccuracy: "exact",
+				CycleStartMS:     &baseMS,
+				CycleEndMS:       &weeklyEndMS,
+				DurationSeconds:  &weeklyDuration,
+				UsedPercent:      &weeklyUsed1,
+			},
+		},
+	}
+
+	writeRes1, err := service.Write(context.Background(), WriteRequest{Entries: []WriteEntry{entry1}})
+	if err != nil {
+		t.Fatalf("devin snapshot write 1 failed: %v", err)
+	}
+	if len(writeRes1.Items) != 1 || writeRes1.Items[0].InsertedCount != 2 {
+		t.Fatalf("unexpected write 1 result: %+v", writeRes1)
+	}
+
+	// Query after first observation
+	queryRes1, err := service.Query(context.Background(), QueryRequest{
+		Accounts: []QueryAccount{
+			{
+				RowKey:   "row-devin",
+				Provider: "devin",
+				Account:  devinAccount,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("devin snapshot query 1 failed: %v", err)
+	}
+	if len(queryRes1.Items) != 1 || len(queryRes1.Items[0].Windows) != 2 {
+		t.Fatalf("unexpected query 1 windows count: %#v", queryRes1.Items)
+	}
+
+	windows1 := make(map[string]Window)
+	for _, w := range queryRes1.Items[0].Windows {
+		windows1[w.ProviderWindowID] = w
+	}
+
+	daily1, ok := windows1["devin:daily"]
+	if !ok {
+		t.Fatalf("devin:daily window missing in query 1")
+	}
+	if daily1.WindowMode != "fixed" || daily1.WindowKind != "daily" || daily1.DurationSeconds == nil || *daily1.DurationSeconds != dailyDuration {
+		t.Fatalf("devin:daily window properties invalid: %#v", daily1)
+	}
+	if daily1.CurrentCycle == nil || daily1.CurrentCycle.ActualStartMS != baseMS || daily1.CurrentCycle.ScheduledEndMS == nil || *daily1.CurrentCycle.ScheduledEndMS != dailyEndMS {
+		t.Fatalf("devin:daily current cycle 1 invalid: %#v", daily1.CurrentCycle)
+	}
+	if daily1.PreviousCycle != nil {
+		t.Fatalf("devin:daily previous cycle 1 should be nil, got: %#v", daily1.PreviousCycle)
+	}
+
+	weekly1, ok := windows1["devin:weekly"]
+	if !ok {
+		t.Fatalf("devin:weekly window missing in query 1")
+	}
+	if weekly1.WindowMode != "fixed" || weekly1.WindowKind != "weekly" || weekly1.DurationSeconds == nil || *weekly1.DurationSeconds != weeklyDuration {
+		t.Fatalf("devin:weekly window properties invalid: %#v", weekly1)
+	}
+	if weekly1.CurrentCycle == nil || weekly1.CurrentCycle.ActualStartMS != baseMS || weekly1.CurrentCycle.ScheduledEndMS == nil || *weekly1.CurrentCycle.ScheduledEndMS != weeklyEndMS {
+		t.Fatalf("devin:weekly current cycle 1 invalid: %#v", weekly1.CurrentCycle)
+	}
+	if weekly1.PreviousCycle != nil {
+		t.Fatalf("devin:weekly previous cycle 1 should be nil, got: %#v", weekly1.PreviousCycle)
+	}
+
+	// 2. Second observation: daily cycle rollover
+	secondDailyStartMS := dailyEndMS
+	secondDailyEndMS := secondDailyStartMS + dailyDuration*1000
+	obs2AtMS := secondDailyStartMS + 1800*1000
+	service.now = func() time.Time { return time.UnixMilli(obs2AtMS) }
+
+	dailyUsed2 := 5.0
+	weeklyUsed2 := 45.0
+
+	entry2 := WriteEntry{
+		RowKey:   "row-devin",
+		Provider: "devin",
+		Account:  devinAccount,
+		Observation: &ObservationInput{
+			Source:              "api_query",
+			SourceObservationID: "devin-obs-2",
+			ObservedAtMS:        obs2AtMS,
+			InventoryScopeKey:   "devin:quota-windows",
+			InventoryMode:       "complete",
+		},
+		Windows: []WindowInput{
+			{
+				ProviderWindowID: "devin:daily",
+				WindowKind:       "daily",
+				WindowMode:       "fixed",
+				ModelScopeKind:   "all",
+				Source:           "api_query",
+				ObservedAtMS:     obs2AtMS,
+				BoundaryAccuracy: "exact",
+				CycleStartMS:     &secondDailyStartMS,
+				CycleEndMS:       &secondDailyEndMS,
+				DurationSeconds:  &dailyDuration,
+				UsedPercent:      &dailyUsed2,
+			},
+			{
+				ProviderWindowID: "devin:weekly",
+				WindowKind:       "weekly",
+				WindowMode:       "fixed",
+				ModelScopeKind:   "all",
+				Source:           "api_query",
+				ObservedAtMS:     obs2AtMS,
+				BoundaryAccuracy: "exact",
+				CycleStartMS:     &baseMS,
+				CycleEndMS:       &weeklyEndMS,
+				DurationSeconds:  &weeklyDuration,
+				UsedPercent:      &weeklyUsed2,
+			},
+		},
+	}
+
+	writeRes2, err := service.Write(context.Background(), WriteRequest{Entries: []WriteEntry{entry2}})
+	if err != nil {
+		t.Fatalf("devin snapshot write 2 failed: %v", err)
+	}
+	if len(writeRes2.Items) != 1 || writeRes2.Items[0].InsertedCount != 2 {
+		t.Fatalf("unexpected write 2 result: %+v", writeRes2)
+	}
+
+	// Query after cycle rollover
+	queryRes2, err := service.Query(context.Background(), QueryRequest{
+		Accounts: []QueryAccount{
+			{
+				RowKey:   "row-devin",
+				Provider: "devin",
+				Account:  devinAccount,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("devin snapshot query 2 failed: %v", err)
+	}
+
+	windows2 := make(map[string]Window)
+	for _, w := range queryRes2.Items[0].Windows {
+		windows2[w.ProviderWindowID] = w
+	}
+
+	daily2 := windows2["devin:daily"]
+	if daily2.CurrentCycle == nil || daily2.CurrentCycle.ActualStartMS != secondDailyStartMS || daily2.CurrentCycle.ScheduledEndMS == nil || *daily2.CurrentCycle.ScheduledEndMS != secondDailyEndMS {
+		t.Fatalf("devin:daily new current cycle invalid: %#v", daily2.CurrentCycle)
+	}
+	if daily2.PreviousCycle == nil {
+		t.Fatalf("devin:daily expected previous cycle after rollover, got nil")
+	}
+	if daily2.PreviousCycle.ActualStartMS != baseMS || daily2.PreviousCycle.ActualEndMS == nil || *daily2.PreviousCycle.ActualEndMS != dailyEndMS {
+		t.Fatalf("devin:daily previous cycle boundaries invalid: %#v", daily2.PreviousCycle)
+	}
+	if daily2.PreviousCycle.EndReason != "scheduled" {
+		t.Fatalf("devin:daily previous cycle end reason = %q, want scheduled", daily2.PreviousCycle.EndReason)
+	}
+	if daily2.PreviousCycle.DurationSeconds == nil || *daily2.PreviousCycle.DurationSeconds != dailyDuration {
+		t.Fatalf("devin:daily previous cycle duration invalid: %#v", daily2.PreviousCycle.DurationSeconds)
+	}
+
+	weekly2 := windows2["devin:weekly"]
+	if weekly2.CurrentCycle == nil || weekly2.CurrentCycle.ActualStartMS != baseMS || weekly2.CurrentCycle.ScheduledEndMS == nil || *weekly2.CurrentCycle.ScheduledEndMS != weeklyEndMS {
+		t.Fatalf("devin:weekly current cycle should remain active: %#v", weekly2.CurrentCycle)
+	}
+	if weekly2.PreviousCycle != nil {
+		t.Fatalf("devin:weekly previous cycle should still be nil: %#v", weekly2.PreviousCycle)
+	}
 }

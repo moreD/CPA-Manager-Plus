@@ -101,7 +101,7 @@ function CostUsageBar({
 
   return (
     <span
-      className={styles.quotaWindowCard}
+      className={`${styles.quotaWindowCard} ${styles.quotaCostCard}`}
       data-account-cost-usage="true"
       title={
         error
@@ -111,22 +111,22 @@ function CostUsageBar({
             : t('auth_cost.title')
       }
     >
-      <span className={styles.quotaWindowPrimaryLine}>
-        <span className={styles.quotaWindowSummary}>USD</span>
-        <span
-          className={styles.quotaTrack}
-          role="progressbar"
-          aria-label={t('auth_cost.remaining')}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={known ? remaining : undefined}
-          aria-valuetext={label}
-        >
-          <span className={`${styles.quotaBar} ${tone}`} style={{ width: `${remaining}%` }} />
-        </span>
+      <span className={styles.quotaWindowHeader}>
+        <span className={styles.quotaWindowLabel}>USD</span>
         <strong className={`${styles.quotaWindowPercent} ${styles.quotaCostAmount}`}>
           {label}
         </strong>
+      </span>
+      <span
+        className={styles.quotaTrack}
+        role="progressbar"
+        aria-label={t('auth_cost.remaining')}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={known ? remaining : undefined}
+        aria-valuetext={label}
+      >
+        <span className={`${styles.quotaBar} ${tone}`} style={{ width: `${remaining}%` }} />
       </span>
     </span>
   );
